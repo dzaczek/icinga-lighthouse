@@ -1,5 +1,5 @@
 /**
- * LilyGO T-Relay 4-Channel Icinga Monitor (Production Version v2.1 - ESP32 Core v3.0 Compatible)
+ * LilyGO T-Relay 4-Channel Icinga Monitor (Production Version v2.3)
  * * Features:
  * - Icinga API Polling (Stream parsing for efficiency).
  * - Universal Logic: Works for Services (Critical) and Hosts (Down) based on API URL filter.
@@ -8,6 +8,7 @@
  * - Watchdog: Hardware WDT + Logic WDT to ensure stability.
  * - Web Panel: Multi-language support (PL/EN), Status Dashboard.
  * - Persistent Storage: Settings saved in Flash (Preferences).
+ * - COMPATIBILITY: ESP32 Core v3.0+
  */
 
 #include <WiFi.h>
@@ -27,6 +28,25 @@
 // --- HARDWARE WATCHDOG CONFIG ---
 #define WDT_TIMEOUT_SECONDS 15 
 
+// ==========================================
+// --- USER CONFIGURATION - RELAY LOGIC ---
+// ==========================================
+// LilyGO T-Relay typically uses Active HIGH logic.
+// However, depending on your wiring (NO vs NC terminals):
+//
+// OPTION A: Wired to NO (Normally Open) - Recommended for alarms
+//           Use: ON=HIGH, OFF=LOW
+//
+// OPTION B: Wired to NC (Normally Closed)
+//           Use: ON=LOW, OFF=HIGH
+//
+// If the siren turns ON immediately at startup, SWAP these values!
+
+#define RELAY_ON  HIGH  
+#define RELAY_OFF LOW   
+
+// ==========================================
+
 // --- CONFIGURATION VARIABLES (Defaults) ---
 Preferences preferences;
 WebServer server(80);
@@ -40,7 +60,7 @@ String icinga_user = "root";
 String icinga_pass = "icinga";
 String web_user = "admin";
 String web_pass = "admin";
-String system_lang = "pl"; // "pl" or "en"
+String system_lang = "pl"; // "pl" or "en" for the Web Interface language
 
 // Timing (milliseconds)
 unsigned long poll_interval_ms = 2000;        // Polling frequency
@@ -89,7 +109,7 @@ void setup() {
   Serial.begin(115200);
   
   // --- HARDWARE WATCHDOG INIT (ESP32 Core v3.0 Compatible) ---
-  // In v3.0, esp_task_wdt_init takes a config struct, not int/bool
+  // In v3.0, esp_task_wdt_init takes a config struct
   esp_task_wdt_config_t wdt_config = {
       .timeout_ms = WDT_TIMEOUT_SECONDS * 1000,
       .idle_core_mask = (1 << 0), // Watch Core 0
@@ -104,11 +124,11 @@ void setup() {
   pinMode(RELAY_3_PIN, OUTPUT);
   pinMode(RELAY_4_PIN, OUTPUT);
   
-  // Initial state - all OFF
-  digitalWrite(RELAY_1_PIN, LOW);
-  digitalWrite(RELAY_2_PIN, LOW);
-  digitalWrite(RELAY_3_PIN, LOW);
-  digitalWrite(RELAY_4_PIN, LOW);
+  // Initial state - Force OFF based on User Configuration
+  digitalWrite(RELAY_1_PIN, RELAY_OFF);
+  digitalWrite(RELAY_2_PIN, RELAY_OFF);
+  digitalWrite(RELAY_3_PIN, RELAY_OFF);
+  digitalWrite(RELAY_4_PIN, RELAY_OFF);
 
   loadSettings();
   setupWiFi();
@@ -163,16 +183,17 @@ void updateRelayLogic() {
   // Relay 4: System Failure Status
   // Active if network error OR data is stale
   if (is_network_error) {
-    digitalWrite(RELAY_4_PIN, HIGH); 
+    digitalWrite(RELAY_4_PIN, RELAY_ON); 
   } else {
-    digitalWrite(RELAY_4_PIN, LOW);
+    digitalWrite(RELAY_4_PIN, RELAY_OFF);
   }
 
   // Relay 1: Main Alarm Siren
   // Fail-Safe: If network error, force silence on siren (to avoid endless screaming on disconnect)
   if (is_network_error) {
-    if (digitalRead(RELAY_1_PIN) == HIGH) {
-       digitalWrite(RELAY_1_PIN, LOW);
+    // If we are currently ON, force OFF.
+    if (digitalRead(RELAY_1_PIN) == RELAY_ON) {
+       digitalWrite(RELAY_1_PIN, RELAY_OFF);
        Serial.println("[LOGIC] Network Error - Forcing Siren OFF.");
     }
     return; 
@@ -184,7 +205,7 @@ void updateRelayLogic() {
   switch (current_state) {
     case STATE_IDLE:
       if (is_alarm_active) {
-        digitalWrite(RELAY_1_PIN, HIGH);
+        digitalWrite(RELAY_1_PIN, RELAY_ON);
         current_state = STATE_INITIAL_ALARM;
         state_start_time = now;
         last_alarm_trigger_time = now; // Update statistic
@@ -194,11 +215,11 @@ void updateRelayLogic() {
 
     case STATE_INITIAL_ALARM:
       if (!is_alarm_active) {
-        digitalWrite(RELAY_1_PIN, LOW);
+        digitalWrite(RELAY_1_PIN, RELAY_OFF);
         current_state = STATE_IDLE;
         Serial.println("[ALARM] Threat cleared. Relay OFF.");
       } else if (elapsed >= init_alarm_duration_ms) {
-        digitalWrite(RELAY_1_PIN, LOW);
+        digitalWrite(RELAY_1_PIN, RELAY_OFF);
         current_state = STATE_COOLDOWN;
         state_start_time = now;
         Serial.println("[ALARM] Initial phase ended. Silence.");
@@ -210,7 +231,7 @@ void updateRelayLogic() {
         current_state = STATE_IDLE;
         Serial.println("[ALARM] Threat cleared during silence.");
       } else if (elapsed >= reminder_interval_ms) {
-        digitalWrite(RELAY_1_PIN, HIGH);
+        digitalWrite(RELAY_1_PIN, RELAY_ON);
         current_state = STATE_REMINDER_ALARM;
         state_start_time = now;
         last_alarm_trigger_time = now;
@@ -220,11 +241,11 @@ void updateRelayLogic() {
 
     case STATE_REMINDER_ALARM:
       if (!is_alarm_active) {
-        digitalWrite(RELAY_1_PIN, LOW);
+        digitalWrite(RELAY_1_PIN, RELAY_OFF);
         current_state = STATE_IDLE;
         Serial.println("[ALARM] Threat cleared.");
       } else if (elapsed >= reminder_duration_ms) {
-        digitalWrite(RELAY_1_PIN, LOW);
+        digitalWrite(RELAY_1_PIN, RELAY_OFF);
         current_state = STATE_COOLDOWN;
         state_start_time = now;
         Serial.println("[ALARM] Reminder ended. Silence.");
@@ -336,7 +357,7 @@ void handleRoot() {
     return server.requestAuthentication();
   }
 
-  // --- LANGUAGE STRINGS ---
+  // --- LANGUAGE STRINGS (WEB UI ONLY) ---
   bool is_pl = (system_lang == "pl");
   String t_title = is_pl ? "Panel Alarmowy LilyGO" : "LilyGO Alarm Panel";
   String t_status_head = is_pl ? "STATUS SYSTEMU" : "SYSTEM STATUS";
