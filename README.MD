@@ -1,7 +1,10 @@
 
 
-# cinga-lighthouse 🚨
+# Icinga-lighthouse 🚨
 **A robust, industrial-grade ESP32 monitor for Icinga2, running on LilyGO T-Relay.**
+
+
+![Image ilustration project ](/docfiles/icinga-lighthouse.png)
 
 icinga-lighthouse turns a LilyGO T-Relay board into a physical alarm system for your infrastructure. It monitors both Services (Critical) and Hosts (Down) via the Icinga2 API. If an issue is detected, it triggers a physical siren/light (Relay 1) with a smart reminder logic.
 -----
