@@ -26,6 +26,10 @@ icinga-lighthouse turns a LilyGO T-Relay board into a physical alarm system for 
 
 -----
 
+## UX
+
+![Image  ux](/docfiles/1.png)
+
 ## 🛠️ Hardware & Pinout
 
 **Device:** LilyGO T-Relay (4-Channel ESP32)
