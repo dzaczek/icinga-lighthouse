@@ -1,0 +1,69 @@
+version: '3'
+
+services:
+  icinga2:
+    image: icinga/icinga2:latest
+    container_name: icinga2
+    hostname: icinga2
+    ports:
+      - "5665:5665"
+    environment:
+      - ICINGA_ZONE=master
+      - ICINGA_API_PASSWORD=icinga
+      # IDO MySQL Connection for Web UI
+      - ICINGA_IDO_MYSQL_HOST=icingadb
+      - ICINGA_IDO_MYSQL_USER=icinga
+      - ICINGA_IDO_MYSQL_PASSWORD=icinga
+      - ICINGA_IDO_MYSQL_DB=icinga
+    volumes:
+      - ./icinga2-config/conf.d:/etc/icinga2/conf.d/test-env:rw
+      - icinga2-data:/var/lib/icinga2
+      - icinga2-certs:/var/lib/icinga2/certs
+    restart: always
+    depends_on:
+      - icingadb
+    networks:
+      - icinga-net
+
+  icingaweb2:
+    image: icinga/icingaweb2:latest
+    container_name: icingaweb2
+    ports:
+      - "8080:8080"
+    environment:
+      - ICINGAWEB_AUTOCONF=true
+      - ICINGAWEB_ADMIN_USER=admin
+      - ICINGAWEB_ADMIN_PASS=admin
+      - ICINGAWEB_IDO_DB_TYPE=mysql
+      - ICINGAWEB_IDO_DB_HOST=icingadb
+      - ICINGAWEB_IDO_DB_NAME=icinga
+      - ICINGAWEB_IDO_DB_USER=icinga
+      - ICINGAWEB_IDO_DB_PASS=icinga
+    restart: always
+    depends_on:
+      - icingadb
+      - icinga2
+    networks:
+      - icinga-net
+
+  icingadb:
+    image: mariadb:latest
+    container_name: icingadb
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=icinga
+      - MYSQL_USER=icinga
+      - MYSQL_PASSWORD=icinga
+    volumes:
+      - icingadb-data:/var/lib/mysql
+    restart: always
+    networks:
+      - icinga-net
+
+volumes:
+  icinga2-data:
+  icinga2-certs:
+  icingadb-data:
+
+networks:
+  icinga-net:
