@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "author": "User",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": 0, "left": 0, "attrs": {} },
+    { "type": "wokwi-relay-module", "id": "relay1", "top": -120, "left": 120, "attrs": {} },
+    { "type": "wokwi-relay-module", "id": "relay2", "top": -40, "left": 120, "attrs": {} },
+    { "type": "wokwi-relay-module", "id": "relay3", "top": 40, "left": 120, "attrs": {} },
+    { "type": "wokwi-relay-module", "id": "relay4", "top": 120, "left": 120, "attrs": {} },
+    { "type": "wokwi-led", "id": "led_status", "top": 80, "left": -80, "attrs": { "color": "blue", "label": "Status" } }
+  ],
+  "connections": [
+    [ "esp:TX", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX", "$serialMonitor:TX", "", [] ],
+    
+    [ "esp:21", "relay1:IN", "green", [ "v0" ] ],
+    [ "esp:GND", "relay1:GND", "black", [ "v0" ] ],
+    [ "esp:5V", "relay1:VCC", "red", [ "v0" ] ],
+    
+    [ "esp:19", "relay2:IN", "green", [ "v0" ] ],
+    [ "esp:GND", "relay2:GND", "black", [ "v0" ] ],
+    [ "esp:5V", "relay2:VCC", "red", [ "v0" ] ],
+
+    [ "esp:18", "relay3:IN", "green", [ "v0" ] ],
+    [ "esp:GND", "relay3:GND", "black", [ "v0" ] ],
+    [ "esp:5V", "relay3:VCC", "red", [ "v0" ] ],
+
+    [ "esp:5", "relay4:IN", "green", [ "v0" ] ],
+    [ "esp:GND", "relay4:GND", "black", [ "v0" ] ],
+    [ "esp:5V", "relay4:VCC", "red", [ "v0" ] ],
+
+    [ "esp:25", "led_status:A", "blue", [ "v0" ] ],
+    [ "esp:GND", "led_status:C", "black", [ "v0" ] ]
+  ]
+}

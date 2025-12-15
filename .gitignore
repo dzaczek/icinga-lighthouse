@@ -1,0 +1,28 @@
+# OS specific
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# AI / Agent specific
+.cursor/
+.cursorrules
+.cursorignore
+terminals/
+
+# Build artifacts (Arduino)
+build/
+*.bin
+*.elf
+*.hex
+
+# Test environment runtime data
+test-env/data/
+

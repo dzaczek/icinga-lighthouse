@@ -4,16 +4,38 @@
  * Description: LilyGO T-Relay 4-Channel Monitor for Icinga2 API
  * Updates: Security Fixes (TLS/Auth), Memory Optimization (Chunked HTML), Reliability
  * ======================================================================================
+ *
+ * --- SIMULATION MODE (Uncomment to use with Wokwi Simulator) ---
+ * // #define SIMULATION_MODE
+ * 
+ * Instructions:
+ * 1. Install "Wokwi for VS Code" extension.
+ * 2. Uncomment the line above (#define SIMULATION_MODE).
+ * 3. Ensure "Wokwi IoT Gateway" is running on your PC.
+ * 4. Press F1 -> "Wokwi: Start Simulation".
+ * 
+ * Note: In simulation, use your PC's IP address for Icinga, not localhost!
  */
 
-#include <WiFi.h>
-#include <WebServer.h>
-#include <HTTPClient.h>
-#include <WiFiClientSecure.h>
-#include <ArduinoJson.h>
-#include <Preferences.h>
-#include "soc/soc.h"             
-#include "soc/rtc_cntl_reg.h"    
+// --- SIMULATION MODE ---
+// To run in Podman/Docker (Linux Simulation):
+// This block allows compiling the .ino file as a C++ Linux app.
+#ifdef LINUX_SIM
+  #include "MockESP.h"
+  // REMOVED DEFINITIONS FROM HERE TO AVOID REDEFINITION ERROR
+#else
+  #include <WiFi.h>
+  #include <WebServer.h>
+  #include <HTTPClient.h>
+  #include <WiFiClientSecure.h>
+  #include <ArduinoJson.h>
+  #include <Preferences.h>
+  #include "soc/soc.h"             
+  #include "soc/rtc_cntl_reg.h" 
+  
+  // Configuration for Real ESP32
+  // ... (Wokwi or Physical)
+#endif    
 
 // --- PIN DEFINITIONS ---
 #define RELAY_1_PIN 21 
@@ -51,12 +73,43 @@ struct LangText {
 LangText txt; // Global object holding current texts
 
 // --- CONFIGURATION ---
-String wifi_ssid = "";
-String wifi_pass = "";
+#ifdef SIMULATION_MODE
+  // In simulation, we already defined these in the LINUX_SIM block at the top?
+  // No, the top block is for INCLUDES.
+  // Wait, let's look at lines 26-30 vs 88-93.
+  
+  // We should declare   them extern or just re-assign if they are global?
+  // C++ allows re-assignment but not re-definition.
+  // The structure of the file is:
+  // 1. Top block (includes)
+  // 2. Global variable definitions (lines 88+)
+  
+  // The issue is I added definitions in the top block:
+  // String wifi_ssid = "DOCKER_NET";
+  
+  // I should REMOVE them from the top block and just leave the includes/defines there.
+  // And define them here.
+  
+  String wifi_ssid = "Wokwi-GUEST"; 
+  String wifi_pass = "";
+  String icinga_url_svc = "https://192.168.1.100:5665/v1/objects/services?filter=service.state==2";
+  String icinga_url_host = "https://192.168.1.100:5665/v1/objects/hosts?filter=host.state!=0"; 
 
-// Default: Service Critical (2) and Host Down (not UP/0)
-String icinga_url_svc = "https://192.168.1.100:5665/v1/objects/services?filter=service.state==2";
-String icinga_url_host = "https://192.168.1.100:5665/v1/objects/hosts?filter=host.state!=0"; 
+  // OVERRIDE FOR DOCKER IF LINUX_SIM is set (which is a subset of SIMULATION_MODE concept here)
+  #ifdef LINUX_SIM
+     // We can't redefine, but we can initialize differently?
+     // Actually, we can just set them in setup()!
+     // Or we can use macros.
+  #endif
+
+#else
+  String wifi_ssid = "";
+  String wifi_pass = "";
+
+  // Default: Service Critical (2) and Host Down (not UP/0)
+  String icinga_url_svc = "https://192.168.1.100:5665/v1/objects/services?filter=service.state==2";
+  String icinga_url_host = "https://192.168.1.100:5665/v1/objects/hosts?filter=host.state!=0"; 
+#endif 
 
 String icinga_user = "root";
 String icinga_pass = "icinga";
@@ -110,8 +163,14 @@ void updateStatusLED();
 String getUptimeStr();
 
 void setup() {
-  // DISABLE BROWNOUT DETECTOR
-  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); 
+  // --- SIMULATION MODE ---
+  #ifdef LINUX_SIM
+    // No Brownout Detector in Sim
+    Serial.println("--- VIRTUAL ESP32 RUNNING IN DOCKER ---");
+  #else
+    // DISABLE BROWNOUT DETECTOR
+    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); 
+  #endif 
 
   Serial.begin(115200);
   delay(1000);
@@ -129,7 +188,17 @@ void setup() {
   digitalWrite(RELAY_4_PIN, RELAY_OFF);
   digitalWrite(STATUS_LED_PIN, LOW);
 
-  loadSettings(); 
+  loadSettings();
+
+  #ifdef LINUX_SIM
+    // Override settings for Docker environment AFTER loadSettings()
+    // (loadSettings() uses Preferences which are not persisted in the Linux mock)
+    wifi_ssid = "DOCKER_NET";
+    wifi_pass = "";
+    icinga_url_svc = "https://icinga2:5665/v1/objects/services?filter=service.state==2";
+    icinga_url_host = "https://icinga2:5665/v1/objects/hosts?filter=host.state!=0";
+  #endif
+
   setupWiFi();
 
   server.on("/", handleRoot);
@@ -584,5 +653,5 @@ void loadSettings() {
 }
 
 String getUptimeStr() {
-  return String(millis() / 1000 / 60) + " min";
+  return String((unsigned long)(millis() / 1000 / 60)) + " min";
 }
