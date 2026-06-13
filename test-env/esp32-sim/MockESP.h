@@ -12,6 +12,7 @@
 #include <mutex>
 #include <atomic>
 #include <cstdlib>
+#include <cctype>
 
 #include <httplib.h>
 
@@ -31,10 +32,22 @@ public:
     ArduinoString operator+(const char* rhs) { return ArduinoString(std::string(*this) + rhs); }
     ArduinoString operator+(const ArduinoString& rhs) { return ArduinoString(std::string(*this) + std::string(rhs)); }
     
-    void trim() { 
+    void trim() {
          // simplistic trim
     }
-    int toInt() { return std::stoi(*this); }
+    int toInt() { return empty() ? 0 : std::stoi(*this); }
+    bool startsWith(const char* p) const { return rfind(p, 0) == 0; }
+    bool startsWith(const std::string& p) const { return rfind(p, 0) == 0; }
+    // Arduino-style substring: [from, to) with to exclusive (vs std::substr len).
+    ArduinoString substring(unsigned int from) const {
+        return from <= size() ? ArduinoString(substr(from)) : ArduinoString();
+    }
+    ArduinoString substring(unsigned int from, unsigned int to) const {
+        if (from > size()) return ArduinoString();
+        if (to > size()) to = size();
+        if (to < from) return ArduinoString();
+        return ArduinoString(substr(from, to - from));
+    }
     
     // Simulating .toString() which is used on IPAddress in Arduino but here WiFi.localIP() returns String
     // Wait, WiFi.localIP() in MockESP returns String directly.
@@ -85,6 +98,7 @@ typedef unsigned char byte;
 #define HTTP_GET 0
 #define HTTP_POST 1 
 #define HTTP_CODE_OK 200
+#define constrain(amt, low, high) ((amt) < (low) ? (low) : ((amt) > (high) ? (high) : (amt)))
 
 // ESP object
 class ESPMock {
@@ -162,6 +176,8 @@ public:
     String getString(const char* key, String def) { return store.count(key) ? store[key] : def; }
     void putULong(const char* key, unsigned long val) { store[key] = std::to_string(val); }
     unsigned long getULong(const char* key, unsigned long def) { return store.count(key) ? std::stoul(store[key]) : def; }
+    void putInt(const char* key, int val) { store[key] = std::to_string(val); }
+    int getInt(const char* key, int def) { return store.count(key) ? std::stoi(store[key]) : def; }
 };
 
 // Mock WebServer (real HTTP server via cpp-httplib)
@@ -346,11 +362,17 @@ public:
     }
 };
 
-// Mock WiFiClientSecure
-class WiFiClientSecure {
+// Mock WiFiClient / WiFiClientSecure.
+// WiFiClientSecure derives from WiFiClient (as on real ESP32) so the firmware
+// can drive either transport through a WiFiClient* base pointer.
+class WiFiClient {
+public:
+    void setTimeout(int s) {}
+    virtual ~WiFiClient() {}
+};
+class WiFiClientSecure : public WiFiClient {
 public:
     void setInsecure() {}
-    void setTimeout(int s) {}
 };
 
 // Mock HTTPClient
@@ -360,15 +382,21 @@ class HTTPClient {
 public:
     void useHTTP10(bool b) {}
     void setTimeout(int ms) {}
-    bool begin(WiFiClientSecure& client, String url) { 
-        this->url = url; 
-        return true; 
+    bool begin(WiFiClient& client, String url) {
+        this->url = url;
+        return true;
     }
     void setAuthorization(const char* u, const char* p) { user = u; pass = p; }
-    void addHeader(String k, String v) {}
+    void addHeader(String k, String v) { reqHeaders.push_back(std::string(k) + ": " + std::string(v)); }
+    void collectHeaders(const char** keys, size_t count) { (void)keys; (void)count; } // capture all anyway
+    String header(const char* name) {
+        std::string key = name; for (auto& c : key) c = (char)tolower(c);
+        auto it = respHeaders.find(key);
+        return it != respHeaders.end() ? String(it->second) : String("");
+    }
     int GET() {
         std::cout << "[HTTP] GET " << url << std::endl;
-        
+
         CURL *curl;
         CURLcode res;
         std::string readBuffer;
@@ -378,25 +406,38 @@ public:
             curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
             curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
             curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-            
+
             if (!user.empty()) {
+                curl_easy_setopt(curl, CURLOPT_HTTPAUTH, (long)CURLAUTH_BASIC);
                 curl_easy_setopt(curl, CURLOPT_USERNAME, user.c_str());
                 curl_easy_setopt(curl, CURLOPT_PASSWORD, pass.c_str());
             }
 
+            // Forward the request headers the firmware set (notably
+            // "Accept: application/json", without which Icinga Web redirects
+            // to its HTML login instead of returning JSON).
+            struct curl_slist* hdrs = nullptr;
+            for (const auto& h : reqHeaders) hdrs = curl_slist_append(hdrs, h.c_str());
+            if (hdrs) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
+
             curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
             curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
-            
+            curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, HeaderCallback);
+            curl_easy_setopt(curl, CURLOPT_HEADERDATA, &respHeaders);
+
             res = curl_easy_perform(curl);
+            long httpCode = 0;
+            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+            if (hdrs) curl_slist_free_all(hdrs);
             curl_easy_cleanup(curl);
-            
+
             if(res != CURLE_OK) {
                 std::cout << "[HTTP] Error: " << curl_easy_strerror(res) << std::endl;
                 return 500;
             }
-            
+
             payload = readBuffer;
-            return 200; 
+            return (int)httpCode;
         }
         return 500;
     }
@@ -414,10 +455,28 @@ public:
 private:
     String url;
     String user, pass;
-    
+    std::vector<std::string> reqHeaders;
+    std::map<std::string, std::string> respHeaders;
+
     static size_t WriteCallback(void *contents, size_t size, size_t nmemb, void *userp) {
         ((std::string*)userp)->append((char*)contents, size * nmemb);
         return size * nmemb;
+    }
+
+    static size_t HeaderCallback(char *buffer, size_t size, size_t nitems, void *userdata) {
+        size_t len = size * nitems;
+        std::string line(buffer, len);
+        auto pos = line.find(':');
+        if (pos != std::string::npos) {
+            std::string key = line.substr(0, pos);
+            std::string val = line.substr(pos + 1);
+            for (auto &c : key) c = (char)tolower(c);
+            size_t a = val.find_first_not_of(" \t");
+            size_t b = val.find_last_not_of("\r\n \t");
+            if (a != std::string::npos) val = val.substr(a, b - a + 1); else val.clear();
+            (*(std::map<std::string, std::string>*)userdata)[key] = val;
+        }
+        return len;
     }
 };
 

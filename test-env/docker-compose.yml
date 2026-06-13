@@ -1,88 +1,186 @@
-version: '3'
+# icinga-lighthouse — test environment (FULL Icinga DB stack)
+#
+#   icinga2  --(writes)-->  icingadb-redis  --(synced by)-->  icingadb daemon  --> MariaDB
+#                                                                                     |
+#   icingaweb2 (icingadb-web module)  <--reads redis + MariaDB---------------------- +
+#
+# The ESP32 firmware (esp32-sim) polls Icinga *Web* (icingadb-web JSON API),
+# NOT the Icinga 2 core API. See README.md.
+#
+# Profiles:
+#   icinga -> the whole monitoring stack
+#   sim    -> the virtual ESP32 (icinga-lighthouse firmware compiled for Linux)
+
+networks:
+  icinga-net:
+    driver: bridge
+
+volumes:
+  mariadb-data:
+  icinga2-data:
+  icingaweb-data:
 
 services:
+
+  # ── MariaDB: databases for icingadb + icingaweb2 ───────────────────────────
+  mariadb:
+    image: mariadb:10.11
+    container_name: il-mariadb
+    hostname: mariadb
+    profiles: ["icinga"]
+    networks: [icinga-net]
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+    volumes:
+      - mariadb-data:/var/lib/mysql
+      - ./mariadb/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  # ── Redis: the message bus between icinga2 and the icingadb daemon ─────────
+  icingadb-redis:
+    image: redis:7-alpine
+    container_name: il-redis
+    hostname: icingadb-redis
+    profiles: ["icinga"]
+    networks: [icinga-net]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ── One-shot init: drops icingadb feature + api user + test objects into
+  #    the icinga2 data volume before icinga2 itself starts. ─────────────────
+  init-icinga2:
+    image: icinga/icinga2:latest
+    container_name: il-init-icinga2
+    profiles: ["icinga"]
+    networks: [icinga-net]
+    environment:
+      ICINGA_CN: icinga2
+      ICINGA_MASTER: "1"
+    volumes:
+      - icinga2-data:/data
+      - ./icinga2/init-icinga2.sh:/config/init-icinga2.sh:ro
+      - ./icinga2/icingadb.conf:/config/icingadb.conf:ro
+      - ./icinga2/api-users.conf:/config/api-users.conf:ro
+      - ./icinga2/test-objects.conf:/config/test-objects.conf:ro
+    command: ["bash", "/config/init-icinga2.sh"]
+
+  # ── Icinga 2 core: schedules checks, writes state to redis ─────────────────
   icinga2:
     image: icinga/icinga2:latest
-    container_name: icinga2
+    container_name: il-icinga2
     hostname: icinga2
     profiles: ["icinga"]
+    networks: [icinga-net]
+    environment:
+      ICINGA_CN: icinga2
+      ICINGA_MASTER: "1"
+    command: ["sh", "-c", "sleep 5 ; exec icinga2 daemon"]
     ports:
       - "5665:5665"
-    environment:
-      - ICINGA_MASTER=1
-      - ICINGA_ZONE=master
-      - ICINGA_API_PASSWORD=icinga
-      # IDO MySQL Connection for Web UI
-      - ICINGA_IDO_MYSQL_HOST=icingadb
-      - ICINGA_IDO_MYSQL_USER=icinga
-      - ICINGA_IDO_MYSQL_PASSWORD=icinga
-      - ICINGA_IDO_MYSQL_DB=icinga
     volumes:
-      # Important for Podman: /etc/icinga2 and /var/lib/icinga2 are symlinks into /data/*
-      # so mount the data volume at /data, and mount test config inside /data as well.
-      - ./data/icinga2:/data:rw
-    restart: always
+      - icinga2-data:/data
     depends_on:
-      - icingadb
-    networks:
-      - icinga-net
+      icingadb-redis:
+        condition: service_started
+      init-icinga2:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsk -u root:icinga https://localhost:5665/v1/status -o /dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
 
+  # ── Icinga DB daemon: drains redis into MariaDB (auto-imports its schema) ──
+  icingadb:
+    image: icinga/icingadb:latest
+    container_name: il-icingadb
+    hostname: icingadb
+    profiles: ["icinga"]
+    networks: [icinga-net]
+    environment:
+      ICINGADB_DATABASE_HOST: mariadb
+      ICINGADB_DATABASE_PORT: "3306"
+      ICINGADB_DATABASE_DATABASE: icingadb
+      ICINGADB_DATABASE_USER: icingadb
+      ICINGADB_DATABASE_PASSWORD: icingadb
+      ICINGADB_REDIS_HOST: icingadb-redis
+      ICINGADB_REDIS_PORT: "6379"
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      icingadb-redis:
+        condition: service_started
+    restart: on-failure
+
+  # ── Icinga Web 2 + icingadb-web module (the API the ESP32 talks to) ────────
   icingaweb2:
     image: icinga/icingaweb2:latest
-    container_name: icingaweb2
+    container_name: il-icingaweb2
+    hostname: icingaweb2
     profiles: ["icinga"]
+    networks: [icinga-net]
     ports:
       - "8080:8080"
     environment:
-      - ICINGAWEB_AUTOCONF=true
-      - ICINGAWEB_ADMIN_USER=admin
-      - ICINGAWEB_ADMIN_PASS=admin
-      - ICINGAWEB_IDO_DB_TYPE=mysql
-      - ICINGAWEB_IDO_DB_HOST=icingadb
-      - ICINGAWEB_IDO_DB_NAME=icinga
-      - ICINGAWEB_IDO_DB_USER=icinga
-      - ICINGAWEB_IDO_DB_PASS=icinga
-    volumes:
-      # Persist Icinga Web 2 configuration (setup wizard results)
-      - ./data/icingaweb2:/data:rw
-    restart: always
+      icingaweb.enabledModules: "icingadb, incubator"
+      # auth + config backend
+      icingaweb.config.global.config_backend: db
+      icingaweb.config.global.config_resource: icingaweb-mysql
+      icingaweb.config.logging.log: php
+      icingaweb.authentication.icingaweb2.backend: db
+      icingaweb.authentication.icingaweb2.resource: icingaweb-mysql
+      icingaweb.groups.icingaweb2.backend: db
+      icingaweb.groups.icingaweb2.resource: icingaweb-mysql
+      # admin / admin
+      icingaweb.passwords.icingaweb2.admin: admin
+      icingaweb.roles.Administrators.users: admin
+      icingaweb.roles.Administrators.permissions: "*"
+      # icingaweb2 config DB
+      icingaweb.resources.icingaweb-mysql.type: db
+      icingaweb.resources.icingaweb-mysql.db: mysql
+      icingaweb.resources.icingaweb-mysql.host: mariadb
+      icingaweb.resources.icingaweb-mysql.dbname: icingaweb
+      icingaweb.resources.icingaweb-mysql.username: icingaweb
+      icingaweb.resources.icingaweb-mysql.password: icingaweb
+      icingaweb.resources.icingaweb-mysql.charset: utf8mb4
+      # icingadb-web module: SQL resource
+      icingaweb.modules.icingadb.config.icingadb.resource: icingadb
+      icingaweb.resources.icingadb.type: db
+      icingaweb.resources.icingadb.db: mysql
+      icingaweb.resources.icingadb.host: mariadb
+      icingaweb.resources.icingadb.dbname: icingadb
+      icingaweb.resources.icingadb.username: icingadb
+      icingaweb.resources.icingadb.password: icingadb
+      icingaweb.resources.icingadb.charset: utf8mb4
+      # icingadb-web module: redis + command transport (icinga2 API)
+      icingaweb.modules.icingadb.redis.redis1.host: icingadb-redis
+      icingaweb.modules.icingadb.redis.redis1.port: "6379"
+      icingaweb.modules.icingadb.commandtransports.icinga2.transport: api
+      icingaweb.modules.icingadb.commandtransports.icinga2.host: icinga2
+      icingaweb.modules.icingadb.commandtransports.icinga2.port: "5665"
+      icingaweb.modules.icingadb.commandtransports.icinga2.username: root
+      icingaweb.modules.icingadb.commandtransports.icinga2.password: icinga
     depends_on:
-      - icingadb
-      - icinga2
-    networks:
-      - icinga-net
+      mariadb:
+        condition: service_healthy
+    restart: on-failure
 
-  icingadb:
-    image: mariadb:latest
-    container_name: icingadb
-    profiles: ["icinga"]
-    environment:
-      - MYSQL_ROOT_PASSWORD=root
-      - MYSQL_DATABASE=icinga
-      - MYSQL_USER=icinga
-      - MYSQL_PASSWORD=icinga
-    volumes:
-      - icingadb-data:/var/lib/mysql
-      # Create extra DB/user for Icinga Web 2 (runs only on first DB init)
-      - ./icingadb-init:/docker-entrypoint-initdb.d:ro
-    restart: always
-    networks:
-      - icinga-net
-
+  # ── Virtual ESP32 running the icinga-lighthouse firmware (Linux build) ─────
   esp32-sim:
     build: ./esp32-sim
-    container_name: esp32-sim
+    container_name: il-esp32-sim
     profiles: ["sim"]
+    networks: [icinga-net]
     ports:
       - "8081:80"
     volumes:
       - ../trelaylaatern.ino:/app/trelaylaatern.ino:ro
-    networks:
-      - icinga-net
-
-
-volumes:
-  icingadb-data:
-
-networks:
-  icinga-net:

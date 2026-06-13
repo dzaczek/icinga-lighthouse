@@ -1,125 +1,108 @@
-# Icinga Lighthouse Test Environment
+# icinga-lighthouse — test environment (Icinga DB stack)
 
-This environment simulates an Icinga 2 infrastructure and provides instructions for running a "Virtual ESP32" to test your Arduino code without physical hardware.
+A full, self-contained **Icinga DB** stack plus a **virtual ESP32** that runs the
+real `trelaylaatern.ino` firmware compiled for Linux. It lets you verify the
+alarm logic end-to-end without any hardware.
 
-## 1. Icinga Environment (Podman)
+The firmware polls **Icinga Web** (the `icingadb-web` JSON API), **not** the
+Icinga 2 core API. That is what makes acknowledged / in-downtime / flapping
+problems disappear from its view — they are filtered out server-side.
 
-The Icinga 2 stack is isolated in the `icinga` profile.
+```
+icinga2 ──writes──▶ redis ──drained by──▶ icingadb daemon ──▶ MariaDB
+                                                                  │
+   icingaweb2 (icingadb-web)  ◀── reads redis + MariaDB ──────────┘
+        ▲
+        │  GET /icingadb/services?...&Accept: application/json
+   esp32-sim  (icinga-lighthouse firmware)
+```
 
-### Start Icinga
+## Services
+
+| Container        | Role                                   | Host port |
+| ---------------- | -------------------------------------- | --------- |
+| `il-mariadb`     | MariaDB (icingadb + icingaweb schemas) | –         |
+| `il-redis`       | Redis bus between icinga2 and icingadb | –         |
+| `il-icinga2`     | Icinga 2 core (API + test objects)     | 5665      |
+| `il-icingadb`    | Icinga DB daemon (redis → MariaDB)     | –         |
+| `il-icingaweb2`  | Icinga Web 2 + `icingadb` module       | **8080**  |
+| `il-esp32-sim`   | Virtual ESP32 running the firmware     | 8081      |
+
+- **Icinga Web 2:** http://localhost:8080  — login `admin` / `admin`
+- **Icinga 2 API:** https://localhost:5665 — `root` / `icinga`
+- **icingadb-web JSON API base:** `http://localhost:8080/icingadb` (served at `/`, *not* `/icingaweb2`)
+
+## 1. Start the monitoring stack
+
 ```bash
 cd test-env
-podman-compose --in-pod false --profile icinga up -d
+docker-compose --profile icinga up -d --build      # or: podman-compose --profile icinga up -d
 ```
 
-### Access
-- **Icinga Web 2 (UI)**: [http://localhost:8080](http://localhost:8080) (User: `admin`, Pass: `admin`)
-- **Icinga 2 API**: `https://localhost:5665` (User: `root`, Pass: `icinga`)
+Wait until everything is healthy (`docker ps`), then seed the test matrix once:
 
-### Icinga Web 2: first-time setup wizard (required)
-If you see a message like “you did not configure Icinga Web 2 yet…”, run the setup wizard once.
-
-1. Generate a setup token:
 ```bash
-podman exec icingaweb2 icingacli setup token create
+./scripts/seed.sh
 ```
 
-2. Open the wizard:
-- `http://localhost:8080/setup`
+### Test object matrix (`icinga2/test-objects.conf`)
 
-3. In the wizard use MariaDB connection for **Icinga Web 2 configuration/auth DB**:
-- **Host**: `icingadb`
-- **Database**: `icingaweb2`
-- **User**: `icingaweb2`
-- **Password**: `icingaweb2`
+All services are **passive**, so a pushed state sticks until changed.
 
-The database/user is created automatically on first DB init via `test-env/icingadb-init/00-icingaweb2.sql`.
+| Service    | Seeded state               | Firmware should… |
+| ---------- | -------------------------- | ---------------- |
+| `svc-crit` | OK (trigger on demand)     | **fire** the siren when set CRITICAL |
+| `svc-ack`  | CRITICAL + acknowledged    | **ignore** |
+| `svc-dt`   | CRITICAL + in downtime     | **ignore** |
+| `svc-flap` | CRITICAL + flapping        | **ignore** |
+| `svc-ok`   | OK                         | never fires |
 
-### First run note (API password)
-On the first start, the Icinga2 container generates a random password in `/data/etc/icinga2/conf.d/api-users.conf`.
-For this repo we use a bind-mounted `/data` directory (`test-env/data/icinga2`), so you can change it on the host if needed.
+## 2. The JSON API the firmware uses
 
-### Stop Icinga
 ```bash
-podman-compose --in-pod false --profile icinga down
+# Unhandled criticals (exactly what the firmware queries). limit=1 keeps it tiny.
+curl -u admin:admin -H 'Accept: application/json' \
+ 'http://localhost:8080/icingadb/services?service.state.soft_state=2&service.state.is_acknowledged=n&service.state.in_downtime=n&service.state.is_flapping=n&limit=1'
 ```
 
----
+Response is a top-level JSON array; each element has `name`, `display_name`,
+`host.display_name` and a `state` object (`soft_state`, `next_check`,
+`is_acknowledged`, `in_downtime`, `is_flapping`, …).
 
-## 2. Virtual ESP32 (container emulator + web UI)
+## 3. Run the virtual ESP32
 
-We provide a **containerized ESP32 emulator** (Linux simulation) that runs next to Icinga in Podman Compose.
-
-It compiles your `trelaylaatern.ino` inside a container (profile `sim`) using a small Arduino compatibility layer, and prints relay state changes to the logs.
-
-### Start Virtual ESP32
 ```bash
-cd test-env
-podman-compose --in-pod false --profile sim up --build
+docker-compose --profile sim up --build
 ```
 
-### Web UI (from your browser)
-The simulated device exposes the same web UI as the real ESP32 sketch:
+It compiles `../trelaylaatern.ino` with the Arduino compatibility shim
+(`esp32-sim/MockESP.h`) and polls `http://icingaweb2:8080/icingadb/...`.
+Relay changes are printed to the log, e.g. `[GPIO] RELAY Pin 21 -> ON`.
+Its web UI (same as the real device) is at http://localhost:8081 (`admin`/`admin`).
 
-- `http://localhost:8081/`
+## 4. Scenarios
 
-Credentials are the same as in the sketch:
-- User: `admin`
-- Pass: `admin`
-
-Example with curl:
 ```bash
-curl -u admin:admin http://localhost:8081/ | head
+./scripts/set-critical.sh        # svc-crit CRITICAL  -> siren fires after `confirm_threshold` polls
+./scripts/set-ok.sh              # svc-crit OK        -> siren clears
+./scripts/ack.sh                 # svc-ack  CRITICAL+ack       (ignored)
+./scripts/downtime.sh            # svc-dt   CRITICAL+downtime   (ignored)
+./scripts/flap.sh                # svc-flap flapping           (ignored)
 ```
 
-### Run both (Icinga + Virtual ESP32)
+Watch the firmware react:
+
 ```bash
-cd test-env
-podman-compose --in-pod false --profile icinga up -d
-podman-compose --in-pod false --profile sim up --build
+docker logs -f il-esp32-sim | grep -E 'checkIcinga|RELAY'
 ```
 
-### Run everything with one command
+You should see the confirmation counter climb (`confirm=1/3`, `2/3`, `3/3`)
+and the relay turn **ON only at `3/3`** — that is the debounce threshold.
+While confirming, polls happen at the fast `recheck` cadence, not the slow one.
+
+## Tear down
+
 ```bash
-cd test-env
-podman-compose --in-pod false --profile icinga --profile sim up -d --build
-```
-
-### What you should see
-- In `esp32-sim` logs you will see relay events like: `[GPIO] RELAY Pin 21 -> ON`
-- The status LED pin (25) will blink in logs: `[GPIO] Pin 25 -> 1/0`
-
-### Notes
-- The simulator connects to Icinga using the hostname `icinga2` on the shared compose network.
-- This is not a full hardware emulator (no real ESP32 peripherals), but it runs your alarm logic + HTTP polling and is great for fast iterations.
-
----
-
-## 3. Testing Scenarios (Triggering Alarms)
-
-Use `curl` commands to change the state of the monitored service in Icinga. The Virtual ESP32 should react within its polling interval (default 5s).
-
-**Trigger Critical Alarm (Relay ON):**
-```bash
-curl -k -u root:icinga -H 'Accept: application/json' -X POST \
- 'https://localhost:5665/v1/actions/process-check-result?service=test-host!test-service' \
- -d '{ "exit_status": 2, "plugin_output": "CRITICAL: Test Failure", "check_source": "manual" }'
-```
-
-**Reset to OK (Relay OFF):**
-```bash
-curl -k -u root:icinga -H 'Accept: application/json' -X POST \
- 'https://localhost:5665/v1/actions/process-check-result?service=test-host!test-service' \
- -d '{ "exit_status": 0, "plugin_output": "OK: Test Passed", "check_source": "manual" }'
-```
-
-If `test-host` / `test-service` don't exist yet, create them first:
-```bash
-curl -k -u root:icinga -H 'Accept: application/json' -X PUT \
-  'https://localhost:5665/v1/objects/hosts/test-host' \
-  -d '{ "attrs": { "address": "127.0.0.1", "check_command": "hostalive" } }'
-
-curl -k -u root:icinga -H 'Accept: application/json' -X PUT \
-  'https://localhost:5665/v1/objects/services/test-host!test-service' \
-  -d '{ "attrs": { "check_command": "dummy", "vars.dummy_state": 0, "vars.dummy_text": "OK" } }'
+docker-compose --profile icinga --profile sim down            # keep data volumes
+docker-compose --profile icinga --profile sim down -v         # wipe everything
 ```

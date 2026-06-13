@@ -6,12 +6,15 @@
 
 ![Image ilustration project ](/docfiles/icinga-lighthouse.png)
 
-icinga-lighthouse turns a LilyGO T-Relay board into a physical alarm system for your infrastructure. It monitors both Services (Critical) and Hosts (Down) via the Icinga2 API. If an issue is detected, it triggers a physical siren/light (Relay 1) with a smart reminder logic.
+icinga-lighthouse turns a LilyGO T-Relay board into a physical alarm system for your infrastructure. It monitors both Services (Critical) and Hosts (Down) through the **Icinga DB Web JSON API** (Icinga *Web*, not the Icinga 2 core API) — so acknowledged, in-downtime and flapping problems are filtered out server-side and never trip the siren. A problem must also be confirmed over several consecutive polls before the siren (Relay 1) fires, with a smart reminder logic afterwards.
 -----
 
 ## 🌟 Key Features
 
-  * **Dual Monitoring:** Checks specific API endpoints for *Critical Services* AND *Down Hosts*.
+  * **Dual Monitoring:** Checks the Icinga DB Web API for *Critical Services* AND *Down Hosts*.
+  * **Noise-free by design:** Server-side filters (`is_acknowledged=n`, `in_downtime=n`, `is_flapping=n`) mean acknowledged / muted / flapping problems are ignored.
+  * **Confirmation threshold:** A problem must be seen *N* polls in a row (default **3**, configurable) before the siren fires — debounces transient/false positives. While confirming, the device polls at a faster "recheck" cadence instead of waiting a full interval.
+  * **Business hours:** Optionally mute the siren outside a working-hours window (e.g. 06:00–18:00, Mon–Fri). Alerts are still shown; only the relay is silenced. Clock from Icinga's HTTP `Date` header (no NTP).
   * **Smart Alarm Logic:**
     1.  **Initial Alarm:** Continuous siren for a set time (e.g., 30s).
     2.  **Cooldown:** Silence to preserve sanity.
@@ -20,7 +23,8 @@ icinga-lighthouse turns a LilyGO T-Relay board into a physical alarm system for 
       * **No Bootloops:** Connection failures do not crash the device.
       * **Brownout Protection:** Disabled brownout detector to handle power spikes from relays.
       * **Heap JSON:** Uses dynamic memory allocation to prevent stack overflows.
-  * **Web Configuration Panel:** Fully configurable via a responsive Web UI (WiFi, URLs, Timings, Language).
+  * **Ethernet (W5500) with WiFi fallback:** Auto-detects the LilyGo T-Relay W5500 shield (H671); if present it is used automatically, otherwise the device falls back to WiFi. Selectable in the panel (Auto / Disabled).
+  * **Web Configuration Panel:** Fully configurable via a responsive Web UI (WiFi, Ethernet, URLs, Timings, Language).
   * **Multi-language:** Dictionary-based support for **English** and **Polish**.
   * **Manual Test Mode:** Physical buttons in Web UI to toggle relays manually (pauses automation for 60s).
 
@@ -49,6 +53,23 @@ Connect your visual/audio signaling device to **Relay 1**:
 1.  Connect Power Source (+) to **COM** (Common).
 2.  Connect Siren (+) to **NO** (Normally Open).
 3.  *The siren will only activate when the alarm is triggered.*
+
+### 🌐 Ethernet — LilyGo T-Relay W5500 Shield (H671)
+
+Plug in the W5500 shield and the device uses wired Ethernet automatically
+(DHCP), falling back to WiFi if the shield is absent or the cable is unplugged.
+It can be forced off in the panel (Ethernet mode → *Disabled*). Pinout (T-Relay-4):
+
+| W5500 | GPIO | | W5500 | GPIO |
+| :--- | :--- | :--- | :--- | :--- |
+| SCLK | 22 | | CS | 27 |
+| MISO | 13 | | RST | 23 |
+| MOSI | 26 | | INT | 36 |
+
+> These pins do not collide with the relays (21/19/18/5) or status LED (25).
+> Uses the WIZnet **Ethernet** Arduino library (the ESP32 core 2.x built-in
+> `ETH` has no SPI/W5500 support). icingadb-web is queried over plain HTTP on
+> the Ethernet path.
 
 -----
 
@@ -123,31 +144,111 @@ The onboard LED (GPIO 25) indicates the current health of the monitor:
 
 ### API Setup
 
-You need two URLs from your Icinga API (Port 5665).
+The device talks to **Icinga Web 2 / Icinga DB Web** (default port 8080), using HTTP Basic auth with an Icinga Web login. `http://` and `https://` are both supported (https uses an insecure/no-verify TLS connection). `limit=1` keeps the response tiny — the device only needs to know whether *any* unhandled problem exists.
 
-  * **Services URL:** Endpoint to check for CRITICAL services.
-      * *Example:* `https://192.168.1.100:5665/v1/objects/services?filter=service.state==2`
-  * **Hosts URL:** Endpoint to check for DOWN hosts.
-      * *Example:* `https://192.168.1.100:5665/v1/objects/hosts?filter=host.state!=0`
+  * **Services URL:** unhandled CRITICAL services.
+      * *Example:* `http://192.168.1.100:8080/icingadb/services?service.state.soft_state=2&service.state.is_acknowledged=n&service.state.in_downtime=n&service.state.is_flapping=n&limit=1`
+  * **Hosts URL:** unhandled DOWN hosts.
+      * *Example:* `http://192.168.1.100:8080/icingadb/hosts?host.state.soft_state=1&host.state.is_acknowledged=n&host.state.in_downtime=n&host.state.is_flapping=n&limit=1`
+  * **Web User / Pass:** an Icinga Web 2 login (e.g. `admin` / `admin` in the test-env).
 
-### Timings
+> Note: Icinga DB Web is served at the web root (`/icingadb/...`), not under `/icingaweb2/...`, on the official container image.
 
-  * **Poll Interval:** How often to query the API (Recommended: 5s - 10s).
-  * **Alarm Duration:** How long the siren screams initially (e.g., 30s).
-  * **Reminder Interval:** How often to remind if the error persists (e.g., every 5 min).
-  * **Reminder Duration:** How long the reminder scream lasts (e.g., 15s).
+### Timings & Logic
+
+  * **Poll Interval:** normal query cadence (e.g. 30s).
+  * **Fast recheck on problem:** while a fresh problem is being confirmed, poll this fast instead (e.g. 10s).
+  * **Confirm threshold:** consecutive problem polls required before the siren fires (default 3).
+  * **Alarm Duration:** how long the siren screams initially (e.g., 30s).
+  * **Reminder Interval:** how often to remind if the error persists (e.g., every 5 min).
+  * **Reminder Duration:** how long the reminder scream lasts (e.g., 15s).
+
+### Business Hours (siren mute window)
+
+The siren can be restricted to a working-hours window — e.g. **06:00–18:00, Mon–Fri**.
+Alerts are still *detected and shown* in the UI outside the window; only the relay is
+kept silent. The device clock comes from the **HTTP `Date` header** of Icinga's replies
+(works over WiFi and Ethernet alike — no NTP). Settings: enable on/off, start hour,
+end hour (exclusive), Mon–Fri vs every day, and a UTC offset for your local time.
 
 -----
 
-## 📦 Installation (Flashing)
+## 🚀 Deployment
 
-1.  Install **Arduino IDE**.
-2.  Install **ESP32 Board Manager** (Expressif).
-3.  Install Libraries:
-      * `ArduinoJson`
-4.  Select Board: **ESP32 Dev Module** (or ESP32 Wrover Module).
-5.  **IMPORTANT:** Since this project uses `WRITE_PERI_REG`, ensure you are using a compatible ESP32 Core version (v3.0+ is supported in the code).
-6.  Upload `icinga-lighthouse.ino`.
+The firmware is a single Arduino sketch (`trelaylaatern.ino`) for the ESP32. Flash it
+with **PlatformIO** (CLI, scriptable) or the **Arduino IDE**. Libraries: `ArduinoJson`
+(always) and `Ethernet` / WIZnet (only for the W5500 shield).
+
+### Option A — PlatformIO CLI (macOS / Linux / Windows)
+
+```bash
+# 1) Install PlatformIO Core
+#    macOS:  brew install platformio        (or: pipx install platformio)
+#    Linux:  pipx install platformio        (or: pip install --user platformio)
+
+# 2) Create a project that points at this sketch
+mkdir -p build/src && cp trelaylaatern.ino build/src/main.ino
+cat > build/platformio.ini <<'INI'
+[env:esp32dev]
+platform = espressif32
+board = esp32dev
+framework = arduino
+monitor_speed = 115200
+upload_speed = 115200          ; some USB-serial bridges fail at 921600
+lib_deps =
+  bblanchon/ArduinoJson@^6.21.3
+  arduino-libraries/Ethernet@^2.0.2
+INI
+
+# 3) Find the serial port
+#    macOS:  ls /dev/tty.usbserial-*   or  /dev/tty.SLAB_USBtoUART
+#    Linux:  ls /dev/ttyUSB*           (add yourself to the 'dialout' group)
+
+# 4) Build, flash, watch the log
+cd build
+pio run                                              # compile
+pio run -t upload --upload-port /dev/tty.usbserial-XXXX
+pio device monitor -b 115200 -p /dev/tty.usbserial-XXXX
+```
+
+> Tip: a fresh board boots into a WiFi access point `icinga-lighthouse-cfg`
+> (password `admin123`); open `http://192.168.4.1` to configure it. To start from
+> known defaults instead, wipe stored settings first: `pio run -t erase`.
+
+### Option B — Arduino IDE (macOS / Linux / Windows)
+
+1. Install the **ESP32 board package** (Boards Manager → "esp32" by Espressif).
+2. Install libraries (Library Manager): **ArduinoJson**, and **Ethernet** (WIZnet) for the shield.
+3. Board: **ESP32 Dev Module**. Port: your USB-serial device.
+4. Open `trelaylaatern.ino` and click **Upload**.
+
+### Option C — flash a prebuilt binary with esptool (any OS)
+
+```bash
+pip install esptool
+esptool.py --port /dev/tty.usbserial-XXXX --baud 115200 write_flash 0x10000 firmware.bin
+```
+
+### First-run configuration
+
+1. Connect to the AP `icinga-lighthouse-cfg` (or reach the device IP if it already has
+   Ethernet/WiFi) and open the web panel (default login `admin` / `admin`).
+2. Set WiFi (or just plug in the W5500 shield for auto Ethernet), the Icinga DB Web URLs
+   + login, timings, confirm threshold, and business hours. Save → the device reboots.
+
+### Try it without hardware (Docker/Podman test-env)
+
+A full Icinga DB stack **and** a virtual ESP32 running this exact firmware are in
+[`test-env/`](test-env/README.md):
+
+```bash
+cd test-env
+docker-compose --profile icinga up -d --build   # Icinga DB stack (web on :8080)
+./scripts/seed.sh                               # test objects
+docker-compose --profile sim up -d --build      # virtual ESP32
+./scripts/set-critical.sh                       # fire an alert; watch the relay react
+docker logs -f il-esp32-sim | grep -E 'checkIcinga|RELAY'
+```
 
 -----
 
