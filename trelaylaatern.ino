@@ -158,6 +158,7 @@ int alarm_confirm_count = 0;       // consecutive polls that saw a problem
 String last_next_check = "";       // next_check hint from Icinga (for the UI)
 bool eth_present = false;          // W5500 chip detected on SPI at boot
 bool eth_active = false;           // Ethernet has an IP (updated from net events)
+bool config_ap_active = false;     // the config access point is currently up
 
 // Current time, parsed from the HTTP "Date" header (UTC).
 bool time_valid = false;
@@ -201,7 +202,7 @@ void setup() {
 
   Serial.begin(115200);
   delay(1000);
-  Serial.println("\n--- icinga-lighthouse v5.2.1 (Icinga DB Web + Ethernet + Schedule blocks) Booting... ---");
+  Serial.println("\n--- icinga-lighthouse v5.2.2 (Icinga DB Web + Ethernet + Schedule blocks) Booting... ---");
 
   pinMode(RELAY_1_PIN, OUTPUT);
   pinMode(RELAY_2_PIN, OUTPUT);
@@ -283,8 +284,14 @@ void loop() {
     }
   } else {
     is_network_error = true;
-    last_connection_status = "AP Mode";
     icinga_reachable = false;
+    // Lost every link (e.g. Ethernet-only and the cable was pulled). Raise the
+    // config AP so the device stays reachable for reconfiguration.
+    if (!config_ap_active) {
+      WiFi.softAP("icinga-lighthouse-cfg", "admin123");
+      config_ap_active = true;
+    }
+    last_connection_status = "AP Mode";
   }
 
   // Soft Watchdog
@@ -572,6 +579,7 @@ void setupWiFi() {
   if (wifi_ssid == "") {
     WiFi.softAP("icinga-lighthouse-cfg", "admin123");
     wifi_connected_mode = false;
+    config_ap_active = true;
     return;
   }
   
@@ -590,10 +598,12 @@ void setupWiFi() {
 
   if (WiFi.status() == WL_CONNECTED) {
     wifi_connected_mode = true;
+    config_ap_active = false;
     last_connection_status = "WiFi Connected";
   } else {
     WiFi.softAP("icinga-lighthouse-cfg", "admin123");
     wifi_connected_mode = false;
+    config_ap_active = true;
     last_connection_status = "WiFi Fail";
   }
 }
