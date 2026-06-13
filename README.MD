@@ -14,7 +14,7 @@ icinga-lighthouse turns a LilyGO T-Relay board into a physical alarm system for 
   * **Dual Monitoring:** Checks the Icinga DB Web API for *Critical Services* AND *Down Hosts*.
   * **Noise-free by design:** Server-side filters (`is_acknowledged=n`, `in_downtime=n`, `is_flapping=n`) mean acknowledged / muted / flapping problems are ignored.
   * **Confirmation threshold:** A problem must be seen *N* polls in a row (default **3**, configurable) before the siren fires — debounces transient/false positives. While confirming, the device polls at a faster "recheck" cadence instead of waiting a full interval.
-  * **Business hours:** Optionally mute the siren outside a working-hours window (e.g. 06:00–18:00, Mon–Fri). Alerts are still shown; only the relay is silenced. Clock from Icinga's HTTP `Date` header (no NTP).
+  * **Business-hours schedule:** Optionally mute the siren outside a schedule of up to 4 day+hour blocks (e.g. Mon–Fri 06–18 *and* Sat 08–14). Alerts are still shown; only the relay is silenced. Clock from Icinga's HTTP `Date` header (no NTP).
   * **Smart Alarm Logic:**
     1.  **Initial Alarm:** Continuous siren for a set time (e.g., 30s).
     2.  **Cooldown:** Silence to preserve sanity.
@@ -163,13 +163,17 @@ The device talks to **Icinga Web 2 / Icinga DB Web** (default port 8080), using 
   * **Reminder Interval:** how often to remind if the error persists (e.g., every 5 min).
   * **Reminder Duration:** how long the reminder scream lasts (e.g., 15s).
 
-### Business Hours (siren mute window)
+### Business Hours (siren schedule)
 
-The siren can be restricted to a working-hours window — e.g. **06:00–18:00, Mon–Fri**.
-Alerts are still *detected and shown* in the UI outside the window; only the relay is
+The siren can be restricted to a schedule built from up to **4 time blocks**. Each block
+is a set of days (tick **Mon–Sun** individually) plus an hour window (**From/To**, To is
+exclusive, and To < From spans midnight). The siren is allowed when *now* matches **any**
+block — so you can mix rules like *Mon–Fri 06:00–18:00* **and** *Sat 08:00–14:00*. A block
+with no days ticked is off; with the whole schedule off the siren runs 24/7.
+
+Alerts are still *detected and shown* in the UI outside the schedule; only the relay is
 kept silent. The device clock comes from the **HTTP `Date` header** of Icinga's replies
-(works over WiFi and Ethernet alike — no NTP). Settings: enable on/off, start hour,
-end hour (exclusive), Mon–Fri vs every day, and a UTC offset for your local time.
+(works over WiFi and Ethernet alike — no NTP); set the **UTC offset** for your local time.
 
 -----
 

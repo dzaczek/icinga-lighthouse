@@ -122,15 +122,19 @@ unsigned long watchdog_timeout_ms = 60000;
 // before the siren fires. Debounces transient/false positives. Configurable.
 int confirm_threshold = 3;
 
-// Business hours: when enabled, the siren is muted outside the window. Alerts
-// are still detected and shown in the UI — only the relay is suppressed. The
-// current time comes from the HTTP "Date" header of Icinga's replies (works
-// over both WiFi and Ethernet, no NTP needed).
-bool bh_enabled       = false;  // restrict siren to business hours
-int  bh_start         = 6;      // local hour, inclusive (0-23)
-int  bh_end           = 18;     // local hour, exclusive (0-23)
-bool bh_weekdays_only = true;   // Mon-Fri only (skip Sat/Sun)
-int  tz_offset        = 0;      // hours added to UTC for local time (e.g. +2)
+// Business-hours schedule: when enabled, the siren only sounds when the current
+// time matches one of the time blocks. Alerts are still detected and shown in
+// the UI outside the schedule — only the relay is suppressed. The clock comes
+// from the HTTP "Date" header of Icinga's replies (WiFi + Ethernet, no NTP).
+//
+// Each block = a day mask (bit0=Mon .. bit6=Sun; 0 disables the block) plus an
+// [start, end) hour window. The siren fires if ANY block matches now.
+#define BH_BLOCKS 4
+bool bh_enabled = false;          // restrict siren to the schedule
+int  tz_offset  = 0;              // hours added to UTC for local time (e.g. +2)
+int  bh_days[BH_BLOCKS] = { 0x1F, 0, 0, 0 };   // default block 1: Mon-Fri
+int  bh_s[BH_BLOCKS]    = { 6,  0, 0, 0 };      // start hour (inclusive)
+int  bh_e[BH_BLOCKS]    = { 18, 0, 0, 0 };      // end hour (exclusive)
 
 // State
 unsigned long last_poll_time = 0;
@@ -197,7 +201,7 @@ void setup() {
 
   Serial.begin(115200);
   delay(1000);
-  Serial.println("\n--- icinga-lighthouse v5.1 (Icinga DB Web + Ethernet + Business Hours) Booting... ---");
+  Serial.println("\n--- icinga-lighthouse v5.2 (Icinga DB Web + Ethernet + Schedule blocks) Booting... ---");
 
   pinMode(RELAY_1_PIN, OUTPUT);
   pinMode(RELAY_2_PIN, OUTPUT);
@@ -409,9 +413,14 @@ bool alertsAllowedNow() {
   int w = cur_wday;
   while (h >= 24) { h -= 24; w = (w + 1) % 7; }
   while (h < 0)   { h += 24; w = (w + 6) % 7; }
-  if (bh_weekdays_only && (w == 0 || w == 6)) return false;   // Sun/Sat
-  if (bh_start <= bh_end) return (h >= bh_start && h < bh_end);
-  return (h >= bh_start || h < bh_end);                       // spans midnight
+  int dayBit = 1 << ((w + 6) % 7);   // convert 0=Sun..6=Sat to bit0=Mon..bit6=Sun
+  for (int i = 0; i < BH_BLOCKS; i++) {
+    if (!(bh_days[i] & dayBit)) continue;          // block off or wrong day
+    int s = bh_s[i], e = bh_e[i];
+    bool inWin = (s <= e) ? (h >= s && h < e) : (h >= s || h < e);  // e<s spans midnight
+    if (inWin) return true;
+  }
+  return false;
 }
 
 // Local time as "Www HH:MM" for the UI ("--" if unknown).
@@ -753,14 +762,19 @@ void handleSave() {
   preferences.putInt("ethdis", eth_disabled ? 1 : 0);
   bh_enabled = (server.arg("bh_en").toInt() == 1);
   preferences.putInt("bh_en", bh_enabled ? 1 : 0);
-  bh_start = constrain((int)server.arg("bh_s").toInt(), 0, 23);
-  preferences.putInt("bh_s", bh_start);
-  bh_end = constrain((int)server.arg("bh_e").toInt(), 0, 23);
-  preferences.putInt("bh_e", bh_end);
-  bh_weekdays_only = (server.arg("bh_wd").toInt() == 1);
-  preferences.putInt("bh_wd", bh_weekdays_only ? 1 : 0);
   tz_offset = constrain((int)server.arg("tz").toInt(), -12, 14);
   preferences.putInt("tz", tz_offset);
+  for (int i = 0; i < BH_BLOCKS; i++) {
+    int days = 0;
+    for (int d = 0; d < 7; d++)
+      if (server.arg(("b" + String(i) + "d" + String(d)).c_str()) == "1") days |= (1 << d);
+    bh_days[i] = days;
+    bh_s[i] = constrain((int)server.arg(("bs" + String(i)).c_str()).toInt(), 0, 23);
+    bh_e[i] = constrain((int)server.arg(("be" + String(i)).c_str()).toInt(), 0, 23);
+    preferences.putInt((String("bd") + i).c_str(), bh_days[i]);
+    preferences.putInt((String("bs") + i).c_str(), bh_s[i]);
+    preferences.putInt((String("be") + i).c_str(), bh_e[i]);
+  }
   unsigned long init_sec = server.arg("init").toInt(); preferences.putULong("init", init_sec * 1000);
   unsigned long rint_min = server.arg("rint").toInt(); preferences.putULong("rint", rint_min * 60 * 1000);
   unsigned long rdur_sec = server.arg("rdur").toInt(); preferences.putULong("rdur", rdur_sec * 1000);
@@ -845,9 +859,7 @@ void handleRoot() {
   SEND_HTML("<p>Link: " + link_kind + " &middot; IP: " + localIPStr() + "</p>");
   SEND_HTML("<p>Info: " + last_connection_status + "</p>");
   if (last_next_check.length() > 0) SEND_HTML("<p>Icinga next check: " + last_next_check + "</p>");
-  String bh_info = bh_enabled
-    ? (" &middot; siren " + String(bh_start) + "-" + String(bh_end) + "h" + (bh_weekdays_only ? " Mon-Fri" : " daily"))
-    : " &middot; siren 24/7";
+  String bh_info = bh_enabled ? " &middot; siren: scheduled" : " &middot; siren: 24/7";
   SEND_HTML("<p>Device time: " + localTimeStr() + bh_info + "</p>");
 
   SEND_HTML("<div class='group'><h3>" + txt.t_test + "</h3>");
@@ -903,21 +915,31 @@ void handleRoot() {
   s += "</div>";
   SEND_HTML(s);
 
-  s = "<div class='group'><h3>Business Hours (siren mute window)</h3>";
-  s += "<small style='color:gray'>Alerts are always detected and shown; outside the window the siren stays silent. Time comes from Icinga's HTTP Date header.</small>";
-  s += "<label>Restrict siren to business hours:</label><select name='bh_en'>";
+  SEND_HTML("<div class='group'><h3>Business Hours (siren schedule)</h3>");
+  SEND_HTML("<small style='color:gray'>Alerts are always detected and shown; the siren only sounds when 'now' matches a block below. Tick the days and set the hour window per block (a block with no days ticked is off). Time comes from Icinga's HTTP Date header.</small>");
+  s = "<label>Restrict siren to schedule:</label><select name='bh_en'>";
   s += "<option value='0' " + String(!bh_enabled ? "selected" : "") + ">Off (24/7)</option>";
-  s += "<option value='1' " + String(bh_enabled ? "selected" : "") + ">On</option>";
-  s += "</select>";
-  s += "<label>Start hour (0-23, inclusive):</label><input type='number' name='bh_s' min='0' max='23' value='" + String(bh_start) + "'>";
-  s += "<label>End hour (0-23, exclusive):</label><input type='number' name='bh_e' min='0' max='23' value='" + String(bh_end) + "'>";
-  s += "<label>Days:</label><select name='bh_wd'>";
-  s += "<option value='1' " + String(bh_weekdays_only ? "selected" : "") + ">Mon-Fri only</option>";
-  s += "<option value='0' " + String(!bh_weekdays_only ? "selected" : "") + ">Every day</option>";
-  s += "</select>";
-  s += "<label>UTC offset for local time (hours):</label><input type='number' name='tz' min='-12' max='14' value='" + String(tz_offset) + "'>";
-  s += "<small style='color:gray'>Device time now: " + localTimeStr() + "</small>";
-  s += "</div>";
+  s += "<option value='1' " + String(bh_enabled ? "selected" : "") + ">On</option></select>";
+  SEND_HTML(s);
+
+  const char* dn[7] = { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" };
+  for (int i = 0; i < BH_BLOCKS; i++) {
+    s = "<div style='border-top:1px solid #eee;margin-top:8px;padding-top:6px'>";
+    s += "<small style='color:gray'>Block " + String(i + 1) + " — days</small><div>";
+    for (int d = 0; d < 7; d++) {
+      bool on = bh_days[i] & (1 << d);
+      s += "<label style='display:inline-block;width:auto;margin:0 8px 4px 0;font-size:13px'>";
+      s += "<input type='checkbox' style='width:auto;margin-right:3px' name='b" + String(i) + "d" + String(d) + "' value='1' " + String(on ? "checked" : "") + ">" + dn[d] + "</label>";
+    }
+    s += "</div><div style='display:flex;gap:8px'>";
+    s += "<span style='flex:1'><label>From (0-23)</label><input type='number' name='bs" + String(i) + "' min='0' max='23' value='" + String(bh_s[i]) + "'></span>";
+    s += "<span style='flex:1'><label>To (0-23)</label><input type='number' name='be" + String(i) + "' min='0' max='23' value='" + String(bh_e[i]) + "'></span>";
+    s += "</div></div>";
+    SEND_HTML(s);
+  }
+
+  s = "<label>UTC offset for local time (hours):</label><input type='number' name='tz' min='-12' max='14' value='" + String(tz_offset) + "'>";
+  s += "<small style='color:gray'>Device time now: " + localTimeStr() + "</small></div>";
   SEND_HTML(s);
 
   s = "<div class='group'><h3>Language / Język</h3>";
@@ -956,10 +978,12 @@ void loadSettings() {
   confirm_threshold = preferences.getInt("thr", confirm_threshold);
   eth_disabled = (preferences.getInt("ethdis", eth_disabled ? 1 : 0) == 1);
   bh_enabled = (preferences.getInt("bh_en", bh_enabled ? 1 : 0) == 1);
-  bh_start = preferences.getInt("bh_s", bh_start);
-  bh_end = preferences.getInt("bh_e", bh_end);
-  bh_weekdays_only = (preferences.getInt("bh_wd", bh_weekdays_only ? 1 : 0) == 1);
   tz_offset = preferences.getInt("tz", tz_offset);
+  for (int i = 0; i < BH_BLOCKS; i++) {
+    bh_days[i] = preferences.getInt((String("bd") + i).c_str(), bh_days[i]);
+    bh_s[i]    = preferences.getInt((String("bs") + i).c_str(), bh_s[i]);
+    bh_e[i]    = preferences.getInt((String("be") + i).c_str(), bh_e[i]);
+  }
   init_alarm_duration_ms = preferences.getULong("init", init_alarm_duration_ms);
   reminder_interval_ms = preferences.getULong("rint", reminder_interval_ms);
   reminder_duration_ms = preferences.getULong("rdur", reminder_duration_ms);
