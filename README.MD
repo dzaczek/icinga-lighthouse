@@ -183,6 +183,23 @@ The firmware is a single Arduino sketch (`trelaylaatern.ino`) for the ESP32. Fla
 with **PlatformIO** (CLI, scriptable) or the **Arduino IDE**. Libraries: `ArduinoJson`
 (always) and `Ethernet` / WIZnet (only for the W5500 shield).
 
+### Quick start — helper scripts (macOS / Linux)
+
+Two scripts wrap the whole flow (they generate an isolated PlatformIO project in
+`.build/`, which is gitignored):
+
+```bash
+./build.sh                 # compile only
+./flash.sh                 # build + auto-detect the serial port + upload
+./flash.sh --monitor       # ...and open the serial monitor afterwards
+./flash.sh --erase         # also wipe NVS (clears saved WiFi/Icinga config)
+./flash.sh /dev/ttyUSB0    # force a specific port (or set PORT=...)
+```
+
+`flash.sh` auto-detects the port (`cu.usbserial*` / `SLAB` / `wchusbserial` on macOS,
+`ttyUSB*` / `ttyACM*` on Linux). Needs PlatformIO: `brew install platformio` or
+`pipx install platformio`. The manual steps below do the same thing by hand.
+
 ### Option A — PlatformIO CLI (macOS / Linux / Windows)
 
 ```bash

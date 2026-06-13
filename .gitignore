@@ -26,3 +26,6 @@ build/
 # Test environment runtime data
 test-env/data/
 
+
+# PlatformIO build dir (build.sh / flash.sh)
+.build/
