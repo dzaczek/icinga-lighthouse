@@ -273,6 +273,24 @@ docker logs -f il-esp32-sim | grep -E 'checkIcinga|RELAY'
 
 -----
 
+## 🔒 Security notes
+
+- **Brute-force protection:** the web panel throttles every failed login (~0.8 s) and
+  locks out after 5 wrong attempts in a row for 60 s (HTTP 429). The lockout is global
+  and auto-expires — a sustained guessing attack briefly locks the panel for everyone,
+  which is the intended trade-off on a single-admin device.
+- **Change the defaults.** Panel login defaults to `admin` / `admin` and the setup AP to
+  `admin123`; set your own in the panel (Security / Admin) and WiFi sections.
+- **Transport is plaintext.** The panel and the Icinga DB Web polling run over HTTP (the
+  ESP32 has no practical TLS server). Keep the device on a trusted VLAN/segment; the
+  config AP and basic-auth credentials are sniffable on the local link.
+
+## 🗼 3D-printable lantern
+
+The [`lighthouse3d/`](lighthouse3d/) folder holds the printable lighthouse enclosure that
+houses the board — STL parts (base, towers, door, stairs, feet), the assembled STEP model,
+a CadQuery source script, and a render preview.
+
 ## 📝 License
 
 

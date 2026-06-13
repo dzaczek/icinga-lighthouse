@@ -160,6 +160,14 @@ bool eth_present = false;          // W5500 chip detected on SPI at boot
 bool eth_active = false;           // Ethernet has an IP (updated from net events)
 bool config_ap_active = false;     // the config access point is currently up
 
+// Brute-force protection for the web panel: slow every failed login and lock the
+// panel after too many in a row. Lockout is global (a sustained attack briefly
+// locks everyone out) and auto-expires.
+const int AUTH_MAX_FAILS = 5;
+const unsigned long AUTH_LOCKOUT_MS = 60000;   // lock 60s after AUTH_MAX_FAILS fails
+int auth_fail_count = 0;
+unsigned long auth_lock_until = 0;             // millis deadline; 0 = not locked
+
 // Current time, parsed from the HTTP "Date" header (UTC).
 bool time_valid = false;
 int cur_utc_hour = 0;
@@ -181,6 +189,7 @@ void handleRoot();
 void handleSave();
 void handleToggle();
 void checkIcinga();
+bool requireAuth();
 bool queryIcingaEndpoint(String url, String typeName);
 void captureHttpDate(String d);
 bool alertsAllowedNow();
@@ -202,7 +211,7 @@ void setup() {
 
   Serial.begin(115200);
   delay(1000);
-  Serial.println("\n--- icinga-lighthouse v5.2.2 (Icinga DB Web + Ethernet + Schedule blocks) Booting... ---");
+  Serial.println("\n--- icinga-lighthouse v5.3.0 (Icinga DB Web + Ethernet + Schedule blocks) Booting... ---");
 
   pinMode(RELAY_1_PIN, OUTPUT);
   pinMode(RELAY_2_PIN, OUTPUT);
@@ -736,9 +745,40 @@ void updateRelayLogic() {
   }
 }
 
+// Authenticates a request with brute-force protection. Returns true only when
+// the credentials are valid; otherwise it has already sent the response (401, or
+// 429 while locked out) and the caller must just return.
+bool requireAuth() {
+  unsigned long now = millis();
+
+  // Locked out -> reject without even checking the password.
+  if (auth_lock_until && (long)(now - auth_lock_until) < 0) {
+    server.send(429, "text/plain", "Too many failed logins. Locked, try again later.");
+    return false;
+  }
+  if (auth_lock_until) { auth_lock_until = 0; auth_fail_count = 0; }  // lock expired
+
+  if (server.authenticate(web_user.c_str(), web_pass.c_str())) {
+    auth_fail_count = 0;
+    return true;
+  }
+
+  // Failed attempt: throttle hard (this also stalls the attacker's request),
+  // and lock the panel once too many pile up.
+  auth_fail_count++;
+  delay(800);
+  if (auth_fail_count >= AUTH_MAX_FAILS) {
+    auth_lock_until = now + AUTH_LOCKOUT_MS;
+    server.send(429, "text/plain", "Too many failed logins. Locked for 60s.");
+    return false;
+  }
+  server.requestAuthentication();
+  return false;
+}
+
 // IMPROVED: Saves Web Credentials and TLS Fingerprint
 void handleSave() {
-  if (!server.authenticate(web_user.c_str(), web_pass.c_str())) return server.requestAuthentication();
+  if (!requireAuth()) return;
 
   String new_ssid = server.arg("ssid");
   String new_pass = server.arg("wpass");
@@ -805,7 +845,7 @@ void handleSave() {
 }
 
 void handleToggle() {
-  if (!server.authenticate(web_user.c_str(), web_pass.c_str())) return server.requestAuthentication();
+  if (!requireAuth()) return;
   int r = server.arg("r").toInt();
   if (r == 0) {
       manual_override_active = false;
@@ -854,7 +894,7 @@ String esc(String v) {
 
 // IMPROVED: Uses Chunked Transfer to avoid Heap Fragmentation
 void handleRoot() {
-  if (!server.authenticate(web_user.c_str(), web_pass.c_str())) return server.requestAuthentication();
+  if (!requireAuth()) return;
 
   server.setContentLength(CONTENT_LENGTH_UNKNOWN);
   server.send(200, "text/html", "");
