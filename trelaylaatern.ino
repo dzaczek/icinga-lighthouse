@@ -201,7 +201,7 @@ void setup() {
 
   Serial.begin(115200);
   delay(1000);
-  Serial.println("\n--- icinga-lighthouse v5.2 (Icinga DB Web + Ethernet + Schedule blocks) Booting... ---");
+  Serial.println("\n--- icinga-lighthouse v5.2.1 (Icinga DB Web + Ethernet + Schedule blocks) Booting... ---");
 
   pinMode(RELAY_1_PIN, OUTPUT);
   pinMode(RELAY_2_PIN, OUTPUT);
@@ -453,7 +453,10 @@ bool applyProblemJson(Stream& stream, String typeName) {
   filter[0]["host"]["display_name"] = true;
   filter[0]["state"]["next_check"] = true;
 
-  DynamicJsonDocument doc(3072);
+  // Filter keeps only a handful of short fields per element, so even if the URL
+  // limit were removed and many problems came back, this stays bounded; with the
+  // default limit=1 it is tiny. A NoMemory error is treated as "no problem".
+  DynamicJsonDocument doc(4096);
   DeserializationError error =
       deserializeJson(doc, stream, DeserializationOption::Filter(filter));
   if (error) { last_connection_status = "JSON err (" + typeName + ")"; return false; }
@@ -640,7 +643,11 @@ void setupNetwork() {
 #ifndef LINUX_SIM
   setupEthernet();                 // sets eth_present / eth_active
 #endif
-  if (!eth_active) setupWiFi();    // Ethernet not ready -> WiFi (or AP config mode)
+  // Bring up WiFi when Ethernet isn't ready (primary path / AP config), OR as a
+  // hot standby alongside Ethernet when credentials exist — so pulling the cable
+  // later doesn't leave the device unreachable. Skip only when Ethernet is up and
+  // no WiFi is configured (then Ethernet alone provides access; no stray AP).
+  if (!eth_active || wifi_ssid != "") setupWiFi();
 }
 
 bool networkUp() {
@@ -775,9 +782,9 @@ void handleSave() {
     preferences.putInt((String("bs") + i).c_str(), bh_s[i]);
     preferences.putInt((String("be") + i).c_str(), bh_e[i]);
   }
-  unsigned long init_sec = server.arg("init").toInt(); preferences.putULong("init", init_sec * 1000);
-  unsigned long rint_min = server.arg("rint").toInt(); preferences.putULong("rint", rint_min * 60 * 1000);
-  unsigned long rdur_sec = server.arg("rdur").toInt(); preferences.putULong("rdur", rdur_sec * 1000);
+  unsigned long init_sec = server.arg("init").toInt(); if (init_sec < 1) init_sec = 1; preferences.putULong("init", init_sec * 1000);
+  unsigned long rint_min = server.arg("rint").toInt(); if (rint_min < 1) rint_min = 1; preferences.putULong("rint", rint_min * 60 * 1000);
+  unsigned long rdur_sec = server.arg("rdur").toInt(); if (rdur_sec < 1) rdur_sec = 1; preferences.putULong("rdur", rdur_sec * 1000);
 
   system_lang = server.arg("lang");
   setLanguage();
@@ -819,6 +826,22 @@ void ensureWiFiConnection() {
   }
 }
 
+// HTML-escape a value before placing it into the page (attribute or text), so
+// config values and Icinga object names can't break the markup or inject HTML.
+String esc(String v) {
+  String o; o.reserve(v.length() + 8);
+  for (int i = 0; i < (int)v.length(); i++) {
+    char c = v[i];
+    if      (c == '&')  o += "&amp;";
+    else if (c == '<')  o += "&lt;";
+    else if (c == '>')  o += "&gt;";
+    else if (c == '\'') o += "&#39;";
+    else if (c == '"')  o += "&quot;";
+    else                o += c;
+  }
+  return o;
+}
+
 // IMPROVED: Uses Chunked Transfer to avoid Heap Fragmentation
 void handleRoot() {
   if (!server.authenticate(web_user.c_str(), web_pass.c_str())) return server.requestAuthentication();
@@ -845,9 +868,9 @@ void handleRoot() {
 
   if (manual_override_active) SEND_HTML("<div class='status warn'>" + txt.st_man + "</div>");
   else if (!icinga_reachable) SEND_HTML("<div class='status warn'>" + txt.st_warn + "</div>");
-  else if (is_alarm_active && !alertsAllowedNow()) SEND_HTML("<div class='status warn'>" + txt.st_err + " (quiet hours, siren muted): " + last_icinga_object_name + "</div>");
-  else if (is_alarm_active) SEND_HTML("<div class='status err'>" + txt.st_err + ": " + last_icinga_object_name + "</div>");
-  else if (alarm_confirm_count > 0) SEND_HTML("<div class='status warn'>CONFIRMING " + String(alarm_confirm_count) + "/" + String(confirm_threshold) + ": " + last_icinga_object_name + "</div>");
+  else if (is_alarm_active && !alertsAllowedNow()) SEND_HTML("<div class='status warn'>" + txt.st_err + " (quiet hours, siren muted): " + esc(last_icinga_object_name) + "</div>");
+  else if (is_alarm_active) SEND_HTML("<div class='status err'>" + txt.st_err + ": " + esc(last_icinga_object_name) + "</div>");
+  else if (alarm_confirm_count > 0) SEND_HTML("<div class='status warn'>CONFIRMING " + String(alarm_confirm_count) + "/" + String(confirm_threshold) + ": " + esc(last_icinga_object_name) + "</div>");
   else SEND_HTML("<div class='status ok'>" + txt.st_ok + "</div>");
 
   String link_kind;
@@ -858,7 +881,7 @@ void handleRoot() {
 #endif
   SEND_HTML("<p>Link: " + link_kind + " &middot; IP: " + localIPStr() + "</p>");
   SEND_HTML("<p>Info: " + last_connection_status + "</p>");
-  if (last_next_check.length() > 0) SEND_HTML("<p>Icinga next check: " + last_next_check + "</p>");
+  if (last_next_check.length() > 0) SEND_HTML("<p>Icinga next check: " + esc(last_next_check) + "</p>");
   String bh_info = bh_enabled ? " &middot; siren: scheduled" : " &middot; siren: 24/7";
   SEND_HTML("<p>Device time: " + localTimeStr() + bh_info + "</p>");
 
@@ -870,7 +893,7 @@ void handleRoot() {
   SEND_HTML("<form action='/save' method='POST'>");
   
   s = "<div class='group'><h3>" + txt.sec_net + "</h3>";
-  s += "<label>SSID:</label><input type='text' name='ssid' value='" + wifi_ssid + "'>";
+  s += "<label>SSID:</label><input type='text' name='ssid' value='" + esc(wifi_ssid) + "'>";
   s += "<label>Pass:</label><input type='password' name='wpass' placeholder='(leave blank = unchanged)'>";
   s += "</div>";
   SEND_HTML(s);
@@ -889,18 +912,18 @@ void handleRoot() {
   SEND_HTML(s);
 
   s = "<div class='group'><h3>Security / Admin</h3>";
-  s += "<label>Web User:</label><input type='text' name='wu' value='" + web_user + "'>";
+  s += "<label>Web User:</label><input type='text' name='wu' value='" + esc(web_user) + "'>";
   s += "<label>Web Pass:</label><input type='password' name='wp' placeholder='(leave blank = unchanged)'>";
-  s += "<label>TLS Fingerprint (SHA1):</label><input type='text' name='fing' placeholder='AA:BB:CC...' value='" + tls_fingerprint + "'>";
+  s += "<label>TLS Fingerprint (SHA1):</label><input type='text' name='fing' placeholder='AA:BB:CC...' value='" + esc(tls_fingerprint) + "'>";
   s += "<small style='color:gray'>Leave empty for Insecure Mode (no validation)</small>";
   s += "</div>";
   SEND_HTML(s);
 
   s = "<div class='group'><h3>" + txt.sec_api + "</h3>";
   s += "<small style='color:gray'>Icinga DB Web JSON API. Filters (is_acknowledged=n &amp; in_downtime=n &amp; is_flapping=n) keep muted problems out.</small>";
-  s += "<label>URL Services (Critical):</label><input type='text' name='iurl_s' value='" + icinga_url_svc + "'>";
-  s += "<label>URL Hosts (Down):</label><input type='text' name='iurl_h' value='" + icinga_url_host + "'>";
-  s += "<label>Web User:</label><input type='text' name='iuser' value='" + icinga_user + "'>";
+  s += "<label>URL Services (Critical):</label><input type='text' name='iurl_s' value='" + esc(icinga_url_svc) + "'>";
+  s += "<label>URL Hosts (Down):</label><input type='text' name='iurl_h' value='" + esc(icinga_url_host) + "'>";
+  s += "<label>Web User:</label><input type='text' name='iuser' value='" + esc(icinga_user) + "'>";
   s += "<label>Web Pass:</label><input type='password' name='ipass' placeholder='(leave blank = unchanged)'>";
   s += "</div>";
   SEND_HTML(s);
