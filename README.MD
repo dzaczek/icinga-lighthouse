@@ -48,6 +48,9 @@ icinga-lighthouse turns a LilyGO T-Relay board into a physical alarm system for 
 
 ### 🔌 Wiring the Siren
 
+> 📐 Full **power & beacon wiring diagram** (24 V supply, mains switch, Osram beacon):
+> [`docs/wiring.md`](docs/wiring.md).
+
 Connect your visual/audio signaling device to **Relay 1**:
 
 1.  Connect Power Source (+) to **COM** (Common).
