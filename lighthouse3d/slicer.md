@@ -85,6 +85,27 @@ Slice → **Preview** → switch to the support/overhang view, then check:
 The threshold trick removes support from the funnel; the *remaining* supports are all
 **external** (lintels, rim, railing) and snap off by hand — **no soluble filament needed there.**
 
+### Fasteners in this model
+
+The model already uses print-friendly fixing, so **most nut/screw features need no support**:
+
+| Feature | Where | Geometry | Printing |
+| :--- | :--- | :--- | :--- |
+| **M3 captive-nut slots** | tower↔base tabs, tower-section tabs | horizontal slot **5.75 × 2.8 mm**, nut **slides in** from the bolt hole | **No support** — the 2.8 mm-tall slot bridges only 5.75 mm. Print, then slide the M3 nut in sideways. |
+| **M3 heat-set inserts** | upper tower-section tab (Ø4 hole) | straight cylindrical hole | **No support** — melt the brass insert in afterwards. |
+| **M6 hex nut pockets** | platform underside, ×3 (lamp mount) | Ø12 hex × **5.6 mm deep**, opens **downward**, with a central Ø6.6 through-hole | Roof is a thin **~2.7 mm annular ledge** (not a full 12 mm disc), so it's only a small overhang. At threshold 25° it picks up a little support there — but the pocket **opens downward and is shallow**, so just poke it out from the opening. |
+
+So in practice you **don't** need dissolvable filament for the nuts either — the slots bridge,
+the inserts are straight holes, and the M6 pockets clear from their open (downward) side.
+
+**Only if an M6 pocket is blocked from below (corbel in the way) or you want it perfect:**
+- Drop a **Support enforcer** on that ledge and clear it from the downward opening, **or**
+- Use a **breakaway / PVA interface** (multi-material) on those three pockets only, **or**
+- **CAD fix (cleanest):** chamfer the hex-pocket roof into a ~45° cone down to the Ø6.6 hole in
+  [`latarnia_cadquery.py`](latarnia_cadquery.py) — then the ledge is self-supporting and prints
+  with no support at the default threshold. Say the word and I'll regenerate the STL.
+
+
 Soluble/breakaway support is only worth it if a **screw boss traps support inside a blind/deep
 cavity** you can't reach. First decide which case you have:
 
