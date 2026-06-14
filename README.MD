@@ -292,7 +292,8 @@ docker logs -f il-esp32-sim | grep -E 'checkIcinga|RELAY'
 
 The [`lighthouse3d/`](lighthouse3d/) folder holds the printable lighthouse enclosure that
 houses the board — STL parts (base, towers, door, stairs, feet), the assembled STEP model,
-a CadQuery source script, and a render preview.
+a CadQuery source script, and a render preview. Slicing guide (Bambu Studio):
+[`lighthouse3d/slicer.md`](lighthouse3d/slicer.md).
 
 ## 📝 License
 
