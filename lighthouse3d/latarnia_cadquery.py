@@ -319,6 +319,54 @@ for k in range(8):
 
 tower = tower.union(plat)
 
+# ============================================================
+# KOREK POD PLATFORMA LAMPY  (drukowalnosc + przepust kabla)
+# Problem: wnetrze pod platforma bylo zamkniete -> podpor druku nie ma
+# jak wyjac, a kabel nie mial czystej drogi. Rozwiazanie: zalewamy gore
+# na pelno (rdzen stozka wiezy + wnetrze korbla). Spod korka to stozek
+# samonosny (~58 st od pionu) opadajacy do sciany w PLUG_BOT_Z, wiec
+# drukuje sie bez podpor i bez wiszacych "sufitow". Srodkiem pionowy
+# przepust na kabel. Sruby M6 + kieszenie nakretek + okna serwisowe
+# wycinamy PONOWNIE, juz po wypelnieniu (korek je zalewa).
+# Granica PLUG_BOT_Z jest nad oknami poziomu z=285 (ich rama siega ~318).
+# ============================================================
+print("[*] wieza: korek pod platforma (pelne wypelnienie + przepust) ...")
+
+PLUG_BOT_Z  = 320.0                 # spod korka (nad gornymi oknami)
+PLUG_APEX_Z = TOWER_H - 1.0         # wierzcholek stozka spodu tuz pod platforma
+PLUG_CABLE_D = CABLE_HOLE_D + 2.0   # przepust kabla nieco luzniejszy do przewleczenia
+_r_plug_bot = r_in(PLUG_BOT_Z)
+
+# 1) pelna bryla wnetrza od PLUG_BOT_Z w gore (rdzen wiezy + wnetrze korbla)
+_inner_fill = cq.Workplane(obj=cone(r_in(0), r_in(TOWER_H), TOWER_H))
+_inner_fill = _inner_fill.union(cq.Workplane(obj=cone(
+    r_in(TOWER_H - CORBEL_H), PLAT_D / 2 - 4.0 - WALL_T, CORBEL_H,
+    z0=TOWER_H - CORBEL_H)))
+_inner_fill = _inner_fill.intersect(
+    cq.Workplane("XY").box(800.0, 800.0, (TOWER_H + 60.0) - PLUG_BOT_Z)
+    .translate((0, 0, (PLUG_BOT_Z + TOWER_H + 60.0) / 2)))
+
+# 2) wytnij stozek (szeroki u dolu -> ostry u gory) => samonosny spod korka
+_funnel = cq.Workplane(obj=cq.Solid.makeCone(
+    _r_plug_bot + 1.0, 0.5, PLUG_APEX_Z - PLUG_BOT_Z,
+    pnt=cq.Vector(0, 0, PLUG_BOT_Z)))
+tower = tower.union(_inner_fill.cut(_funnel))
+
+# 3) przepust kabla: pionowy kanal srodkiem (platforma -> wnetrze wiezy)
+tower = tower.cut(cq.Workplane("XY").cylinder((TOWER_H + 8.0) - PLUG_BOT_Z,
+                                              PLUG_CABLE_D / 2)
+                  .translate((0, 0, (PLUG_BOT_Z + TOWER_H + 8.0) / 2)))
+
+# 4) ponowne mocowanie lampy (korek je zalal): przelot M6 + kieszen hex
+for k in range(3):
+    a = math.radians(90 + k * 120)
+    hx, hy = (LAMP_BCD / 2) * math.cos(a), (LAMP_BCD / 2) * math.sin(a)
+    tower = tower.cut(cq.Workplane("XY").cylinder(28.0, LAMP_HOLE_D / 2)
+                      .translate((hx, hy, TOWER_H + 4.0 - 14.0)))     # przelot + luz na grot
+    tower = tower.cut(cq.Workplane("XY")
+                      .polygon(6, LAMP_NUT_AC).extrude(LAMP_NUT_T + 0.4)
+                      .translate((hx, hy, TOWER_H - LAMP_NUT_T)))     # kieszen nakretki M6
+
 # okna serwisowe w korbelu - dostep z dolu do kieszeni nakretek
 for k in range(3):
     a = math.radians(90 + k * 120)
