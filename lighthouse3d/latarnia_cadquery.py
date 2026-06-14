@@ -366,6 +366,11 @@ for k in range(3):
     tower = tower.cut(cq.Workplane("XY")
                       .polygon(6, LAMP_NUT_AC).extrude(LAMP_NUT_T + 0.4)
                       .translate((hx, hy, TOWER_H - LAMP_NUT_T)))     # kieszen nakretki M6
+    # sfazowanie stropu kieszeni: plaski pierscien (Ø6.6->Ø12) -> stozek ~48 st,
+    # czyli samonosny strop drukowany od dolu (bez podpor wewnatrz kieszeni).
+    tower = tower.cut(cq.Workplane(obj=cq.Solid.makeCone(
+        LAMP_NUT_AC / 2, LAMP_HOLE_D / 2, 3.0,
+        pnt=cq.Vector(hx, hy, TOWER_H + LAMP_NUT_T))))               # 6.0 -> 3.3 mm na h=3.0
 
 # okna serwisowe w korbelu - dostep z dolu do kieszeni nakretek
 for k in range(3):
