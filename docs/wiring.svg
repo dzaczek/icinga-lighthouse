@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 580" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <style>
+    .hot{stroke:#d62728;stroke-width:3;fill:none}
+    .ret{stroke:#2c3e50;stroke-width:3;fill:none}
+    .pe{stroke:#2ca02c;stroke-width:3;fill:none}
+    .box{fill:#ffffff;stroke:#34495e;stroke-width:2}
+    .t{fill:#2c3e50}
+    .tt{fill:#2c3e50;font-weight:bold}
+    .term{font-size:11px;fill:#34495e}
+    .wl{font-size:11px}
+  </style>
+
+  <rect x="0" y="0" width="1000" height="580" fill="#ffffff"/>
+  <text x="500" y="34" text-anchor="middle" font-size="19" class="tt">icinga-lighthouse &#8212; 24&#160;V power &amp; beacon wiring</text>
+
+  <!-- ===================== AC mains ===================== -->
+  <rect class="box" x="30" y="120" width="150" height="170" rx="8"/>
+  <text x="105" y="150" text-anchor="middle" font-size="14" class="tt">230&#160;V AC mains</text>
+  <text x="46" y="185" font-size="13" class="t">L &#183; Line</text>
+  <text x="46" y="225" font-size="13" class="t">N &#183; Neutral</text>
+  <text x="46" y="265" font-size="13" class="t">PE &#183; Earth</text>
+  <circle cx="180" cy="180" r="5" fill="#d62728"/>
+  <circle cx="180" cy="220" r="5" fill="#2c3e50"/>
+  <circle cx="180" cy="260" r="5" fill="#2ca02c"/>
+
+  <!-- ===================== Switch 3628 ===================== -->
+  <rect x="235" y="162" width="128" height="36" rx="6" fill="#fff4d6" stroke="#b8860b" stroke-width="2"/>
+  <text x="299" y="179" text-anchor="middle" font-size="12.5" class="tt">Switch 3628</text>
+  <text x="299" y="192" text-anchor="middle" font-size="10.5" class="t">(on Line only)</text>
+
+  <!-- ===================== PSU ===================== -->
+  <rect class="box" x="410" y="120" width="212" height="190" rx="8"/>
+  <text x="516" y="150" text-anchor="middle" font-size="14" class="tt">LRS-100-24</text>
+  <text x="516" y="168" text-anchor="middle" font-size="12" class="t">24&#160;V / 4.5&#160;A</text>
+  <circle cx="410" cy="180" r="5" fill="#d62728"/><text x="424" y="184" class="term">L</text>
+  <circle cx="410" cy="220" r="5" fill="#2c3e50"/><text x="424" y="224" class="term">N</text>
+  <circle cx="410" cy="260" r="5" fill="#2ca02c"/><text x="424" y="264" class="term">&#9095; FG</text>
+  <circle cx="622" cy="190" r="5" fill="#d62728"/><text x="608" y="194" text-anchor="end" class="term">+V &#183; 24&#160;V</text>
+  <circle cx="622" cy="270" r="5" fill="#2c3e50"/><text x="608" y="274" text-anchor="end" class="term">&#8722;V &#183; 0&#160;V</text>
+
+  <!-- ===================== AC wires ===================== -->
+  <path class="hot" d="M180 180 H235"/>
+  <path class="hot" d="M363 180 H410"/>
+  <path class="ret" d="M180 220 H410"/>
+  <path class="pe"  d="M180 260 H410"/>
+
+  <!-- ===================== +24V feed + rail ===================== -->
+  <path class="hot" d="M622 190 H652 V360"/>
+  <path class="hot" d="M520 360 H652"/>
+  <path class="hot" d="M520 360 V388"/>
+  <path class="hot" d="M620 360 V388"/>
+  <circle cx="620" cy="360" r="4" fill="#d62728"/>
+  <text x="540" y="352" font-size="12" fill="#d62728" class="wl">+24&#160;V</text>
+
+  <!-- ===================== 0V feed + rail ===================== -->
+  <path class="ret" d="M622 270 V335 H445 V520"/>
+  <path class="ret" d="M445 520 H835"/>
+  <path class="ret" d="M520 508 V520"/>
+  <path class="ret" d="M835 508 V520"/>
+  <circle cx="520" cy="520" r="4" fill="#2c3e50"/>
+  <text x="435" y="514" text-anchor="end" font-size="12" fill="#2c3e50" class="wl">0&#160;V</text>
+
+  <!-- ===================== T-Relay ===================== -->
+  <rect class="box" x="455" y="388" width="250" height="120" rx="8" fill="#eaf2fb" stroke="#2471a3"/>
+  <text x="580" y="452" text-anchor="middle" font-size="14" class="tt">LilyGo T-Relay</text>
+  <text x="580" y="470" text-anchor="middle" font-size="12" class="t">(DC-IN 12&#8211;24&#160;V)</text>
+  <text x="520" y="405" text-anchor="middle" class="term">DC-IN +</text>
+  <text x="620" y="405" text-anchor="middle" class="term">COM1</text>
+  <text x="520" y="503" text-anchor="middle" class="term">DC-IN &#8722;</text>
+  <text x="698" y="444" text-anchor="end" class="term">NO1</text>
+  <circle cx="520" cy="388" r="3.5" fill="#d62728"/>
+  <circle cx="620" cy="388" r="3.5" fill="#d62728"/>
+  <circle cx="520" cy="508" r="3.5" fill="#2c3e50"/>
+  <circle cx="705" cy="448" r="3.5" fill="#d62728"/>
+
+  <!-- relay 1 -> beacon -->
+  <path class="hot" d="M705 448 H745"/>
+  <text x="725" y="440" text-anchor="middle" font-size="10.5" fill="#d62728">switched</text>
+
+  <!-- ===================== Beacon ===================== -->
+  <rect class="box" x="745" y="388" width="180" height="120" rx="8" fill="#fdebd0" stroke="#ca6f1e"/>
+  <text x="835" y="452" text-anchor="middle" font-size="14" class="tt">Osram beacon</text>
+  <text x="835" y="470" text-anchor="middle" font-size="12" class="t">24&#160;V &#183; H1 ~55&#160;W</text>
+  <text x="757" y="444" font-size="14" class="tt">+</text>
+  <text x="846" y="502" font-size="14" class="tt">&#8722;</text>
+  <circle cx="745" cy="448" r="3.5" fill="#d62728"/>
+  <circle cx="835" cy="508" r="3.5" fill="#2c3e50"/>
+
+  <!-- ===================== Legend ===================== -->
+  <line x1="30"  y1="552" x2="62"  y2="552" class="hot"/>
+  <text x="68"  y="556" font-size="12" class="t">Live / +24&#160;V (supply)</text>
+  <line x1="250" y1="552" x2="282" y2="552" class="ret"/>
+  <text x="288" y="556" font-size="12" class="t">Neutral / 0&#160;V (return)</text>
+  <line x1="470" y1="552" x2="502" y2="552" class="pe"/>
+  <text x="508" y="556" font-size="12" class="t">PE / Earth</text>
+  <text x="700" y="556" font-size="11" font-style="italic" fill="#555">Relay 1 (GPIO 21) switches +24&#160;V to the beacon</text>
+</svg>

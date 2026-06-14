@@ -28,60 +28,10 @@ powered from the **same 24 V rail** via its 12–24 V DC input — no DC-DC conv
 
 ## Wiring diagram
 
-> Rendered natively on GitHub (Mermaid). **Red = 230 V AC**, **blue = 24 V DC**.
-> Thick arrows are mains conductors; thin arrows are DC; the dotted link is the switched
-> relay contact.
+<img src="wiring.svg" alt="24 V power and beacon wiring diagram" width="100%">
 
-```mermaid
-flowchart LR
-  subgraph AC["⚡ 230 V AC mains"]
-    L["L · Line"]
-    N["N · Neutral"]
-    PE["PE · Earth ⏚"]
-  end
-
-  SW["🔌 Switch 3628<br/><b>on the LINE only</b>"]
-
-  subgraph PSU["🔋 Mean Well LRS-100-24 · 24 V / 4.5 A"]
-    PL["AC L"]
-    PN["AC N"]
-    PG["FG ⏚"]
-    P24["+V · +24 V"]
-    P0["−V · 0 V"]
-  end
-
-  subgraph TR["🟦 LilyGo T-Relay · DC-IN 12–24 V"]
-    VIN["DC-IN +"]
-    GND["DC-IN −"]
-    COM["Relay 1 · COM"]
-    NO["Relay 1 · NO"]
-  end
-
-  BEAC["🚨 Osram beacon<br/>24 V · H1 ~55 W"]
-
-  L ==>|Line| SW
-  SW ==>|Line| PL
-  N ==>|Neutral| PN
-  PE ==>|Earth| PG
-  P24 -->|+24 V| VIN
-  P0 -->|0 V| GND
-  P24 -->|+24 V| COM
-  COM -.->|relay 1 closes| NO
-  NO -->|+24 V switched| BEAC
-  BEAC -->|0 V return| P0
-
-  classDef ac fill:#fdecea,stroke:#c0392b,color:#922b21;
-  classDef dc fill:#e8f1fb,stroke:#2471a3,color:#1a5276;
-  classDef sw fill:#fff4d6,stroke:#b8860b,color:#7d6608;
-  classDef load fill:#fdebd0,stroke:#ca6f1e,color:#9c640c;
-  class L,N,PE,PL,PN,PG ac;
-  class P24,P0,VIN,GND,COM,NO dc;
-  class SW sw;
-  class BEAC load;
-  style AC fill:#fff,stroke:#c0392b,stroke-width:2px
-  style PSU fill:#fff,stroke:#7f8c8d,stroke-width:2px
-  style TR fill:#fff,stroke:#2471a3,stroke-width:2px
-```
+**Legend** — 🔴 red = Live / +24 V (supply) · ⬛ dark = Neutral / 0 V (return) · 🟢 green = PE (earth).
+Relay 1 (GPIO 21) switches +24 V to the beacon; the board is powered from the same 24 V rail.
 
 ---
 
