@@ -72,15 +72,20 @@ board's DC-IN(−) and the beacon return.
    N is even better.
 2. **Single common 0 V.** PSU `−V`, T-Relay `DC-IN(−)` and the beacon `(−)` all share the
    0 V rail. Relay contacts are isolated from the logic, but the supply ground is common.
-3. **Verify the “12–24 V” marking** is on the board's **DC power input** terminal before
+3. **`COM1` is a relay terminal, not a power pin.** The relay's `COM / NO / NC` block is a
+   **dry, isolated contact**, separate from the board's `DC-IN(±)`. Here `COM1` is fed
+   **+24 V** so Relay 1 switches the **high side** to the beacon — do **not** confuse it with
+   `DC-IN(−)` / 0 V. (Low-side switching also works: `COM1 = 0 V`, `NO1 → beacon(−)`,
+   `beacon(+) → +24 V`.)
+4. **Verify the “12–24 V” marking** is on the board's **DC power input** terminal before
    connecting — feeding 24 V to a 5 V-only input would destroy the board.
-4. **Halogen inrush.** An H1 bulb's cold filament draws ~8–10× its rated current (~20 A for a
+5. **Halogen inrush.** An H1 bulb's cold filament draws ~8–10× its rated current (~20 A for a
    few ms). The on-board relay contacts (typ. 10 A / 30 V DC) tolerate this occasionally; for
    frequent switching add an external power relay/contactor or an NTC soft-start to spare the
    contacts.
-5. **Fuse + earth.** Fit a T2A slow-blow fuse on L before the PSU, and bond the metal
+6. **Fuse + earth.** Fit a T2A slow-blow fuse on L before the PSU, and bond the metal
    enclosure to PE.
-6. **Supply headroom.** Beacon ~2.3 A + board < 0.2 A ≈ 2.5 A, well within the LRS-100-24's
+7. **Supply headroom.** Beacon ~2.3 A + board < 0.2 A ≈ 2.5 A, well within the LRS-100-24's
    4.5 A.
 
 ---

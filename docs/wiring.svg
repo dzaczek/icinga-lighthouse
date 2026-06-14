@@ -65,7 +65,9 @@
   <text x="580" y="452" text-anchor="middle" font-size="14" class="tt">LilyGo T-Relay</text>
   <text x="580" y="470" text-anchor="middle" font-size="12" class="t">(DC-IN 12&#8211;24&#160;V)</text>
   <text x="520" y="405" text-anchor="middle" class="term">DC-IN +</text>
+  <text x="520" y="419" text-anchor="middle" font-size="9" font-style="italic" fill="#7f8c8d">board power</text>
   <text x="620" y="405" text-anchor="middle" class="term">COM1</text>
+  <text x="620" y="419" text-anchor="middle" font-size="9" font-style="italic" fill="#7f8c8d">relay common &#183; isolated</text>
   <text x="520" y="503" text-anchor="middle" class="term">DC-IN &#8722;</text>
   <text x="698" y="444" text-anchor="end" class="term">NO1</text>
   <circle cx="520" cy="388" r="3.5" fill="#d62728"/>
